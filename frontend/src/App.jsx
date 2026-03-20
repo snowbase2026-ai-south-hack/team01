@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import MetricsSidebar from './components/MetricsSidebar'
 import Chat from './components/Chat'
 
@@ -8,10 +8,28 @@ function generateSessionId() {
   return 'sess-' + Math.random().toString(36).slice(2, 10)
 }
 
+function getStoredSessionId() {
+  try {
+    return localStorage.getItem('caito_session_id') || generateSessionId()
+  } catch {
+    return generateSessionId()
+  }
+}
+
+function storeSessionId(id) {
+  try {
+    localStorage.setItem('caito_session_id', id)
+  } catch {
+    // ignore
+  }
+}
+
 export default function App() {
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
-  const [sessionId, setSessionId] = useState(generateSessionId)
+  const [sessionId, setSessionId] = useState(getStoredSessionId)
+  const [sessions, setSessions] = useState([])
+  const [showSessions, setShowSessions] = useState(false)
   const [metrics, setMetrics] = useState({
     confidence: 0,
     pressure: 0,
@@ -19,6 +37,48 @@ export default function App() {
     history: { confidence: [], pressure: [] },
   })
   const abortRef = useRef(null)
+
+  // Persist session ID
+  useEffect(() => {
+    storeSessionId(sessionId)
+  }, [sessionId])
+
+  // Load history for current session on mount
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        const res = await fetch(`${API_BASE}/sessions/${sessionId}/history`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.messages && data.messages.length > 0) {
+          setMessages(data.messages)
+        }
+        if (data.metrics) {
+          setMetrics((prev) => ({
+            ...prev,
+            confidence: data.metrics.confidence ?? prev.confidence,
+            pressure: data.metrics.pressure ?? prev.pressure,
+            turn: data.metrics.turn ?? prev.turn,
+          }))
+        }
+      } catch {
+        // ignore — fresh session
+      }
+    }
+    loadHistory()
+  }, [sessionId])
+
+  // Load session list
+  const loadSessions = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/sessions`)
+      if (!res.ok) return
+      const data = await res.json()
+      setSessions(data.sessions || [])
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const updateMetrics = useCallback((newMetrics) => {
     if (!newMetrics) return
@@ -135,13 +195,15 @@ export default function App() {
   const handleNewSession = useCallback(() => {
     if (abortRef.current) abortRef.current.abort()
     setMessages([])
-    setSessionId(generateSessionId())
+    const newId = generateSessionId()
+    setSessionId(newId)
     setMetrics({
       confidence: 0,
       pressure: 0,
       turn: 0,
       history: { confidence: [], pressure: [] },
     })
+    setShowSessions(false)
   }, [])
 
   const handleReset = useCallback(async () => {
@@ -158,6 +220,33 @@ export default function App() {
     handleNewSession()
   }, [sessionId, handleNewSession])
 
+  const handleSwitchSession = useCallback((newSessionId) => {
+    if (abortRef.current) abortRef.current.abort()
+    setMessages([])
+    setSessionId(newSessionId)
+    setMetrics({
+      confidence: 0,
+      pressure: 0,
+      turn: 0,
+      history: { confidence: [], pressure: [] },
+    })
+    setShowSessions(false)
+  }, [])
+
+  const handleToggleSessions = useCallback(() => {
+    setShowSessions((prev) => {
+      if (!prev) loadSessions()
+      return !prev
+    })
+  }, [loadSessions])
+
+  const positionLabels = {
+    scenario_b: 'Сценарий Б',
+    scenario_b_adjusted: 'Сценарий Б (скорр.)',
+    reconsider: 'Пересмотр',
+    halt: 'Остановка',
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -166,10 +255,36 @@ export default function App() {
           <span className="logo-sub">Chief AI & Technology Officer</span>
         </div>
         <div className="header-actions">
+          <button className="btn" onClick={handleToggleSessions}>Сессии</button>
           <button className="btn" onClick={handleReset}>Сброс</button>
           <button className="btn btn-primary" onClick={handleNewSession}>Новая сессия</button>
         </div>
       </header>
+
+      {showSessions && (
+        <div className="sessions-panel">
+          <div className="sessions-title">История сессий</div>
+          {sessions.length === 0 && <div className="sessions-empty">Нет сохранённых сессий</div>}
+          {sessions.map((s) => (
+            <div
+              key={s.session_id}
+              className={`sessions-item ${s.session_id === sessionId ? 'sessions-item-active' : ''}`}
+              onClick={() => handleSwitchSession(s.session_id)}
+            >
+              <div className="sessions-item-id">{s.session_id}</div>
+              <div className="sessions-item-meta">
+                {s.message_count} сообщ. · ход {s.turn || 0}
+                {s.position && ` · ${positionLabels[s.position] || s.position}`}
+              </div>
+              {s.last_active && (
+                <div className="sessions-item-time">
+                  {new Date(s.last_active).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="main">
         <MetricsSidebar metrics={metrics} />
