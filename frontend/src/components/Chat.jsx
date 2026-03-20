@@ -1,6 +1,21 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { extractAndRenderCharts } from './InlineCharts'
+
+function MessageContent({ content, role }) {
+  const { mainText, statusBlock } = useMemo(() => {
+    if (role !== 'assistant') return { mainText: content, statusBlock: null }
+    return extractAndRenderCharts(content || '')
+  }, [content, role])
+
+  return (
+    <>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{mainText}</ReactMarkdown>
+      {statusBlock}
+    </>
+  )
+}
 
 export default function Chat({ messages, onSend, isLoading }) {
   const [input, setInput] = useState('')
@@ -53,7 +68,7 @@ export default function Chat({ messages, onSend, isLoading }) {
               {msg.role === 'user' ? 'Вы' : 'AI'}
             </div>
             <div className="message-bubble">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              <MessageContent content={msg.content} role={msg.role} />
             </div>
           </div>
         ))}

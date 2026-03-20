@@ -978,14 +978,14 @@ def build_structured_block(state: DecisionState) -> str:
         conditions.append("CAPEX −30% + деградация модели → остановка")
         conditions.append("Precision ≥ 0.380 + SLA ≥ 95% + CAPEX полный → ускорение")
 
-    block = f"""
-
----
-**ТЕКУЩАЯ ПОЗИЦИЯ:** {pos}
-**КЛЮЧЕВЫЕ МЕТРИКИ:** payback {state.payback_months:.0f} мес | ROI {state.roi_24m:.1f}× | доп. выручка Y1 {state.incremental_revenue_y1_mln:.0f} млн ₽ | операц. потери {state.operational_losses_mln:.0f} млн ₽/год
-**ДОПУЩЕНИЯ:** {'; '.join(assumptions)}
-**УСЛОВИЯ ПЕРЕСМОТРА:** {'; '.join(conditions)}
----"""
+    block = (
+        "\n\n---\n\n"
+        f"**ТЕКУЩАЯ ПОЗИЦИЯ:** {pos}\n\n"
+        f"**КЛЮЧЕВЫЕ МЕТРИКИ:** payback {state.payback_months:.0f} мес | ROI {state.roi_24m:.1f}× | доп. выручка Y1 {state.incremental_revenue_y1_mln:.0f} млн ₽ | операц. потери {state.operational_losses_mln:.0f} млн ₽/год\n\n"
+        f"**ДОПУЩЕНИЯ:** {'; '.join(assumptions)}\n\n"
+        f"**УСЛОВИЯ ПЕРЕСМОТРА:** {'; '.join(conditions)}\n\n"
+        "---"
+    )
     return block
 
 

@@ -466,6 +466,139 @@ body {
 .message-bubble hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .message-bubble blockquote { border-left: 3px solid var(--accent); padding-left: 12px; margin: 8px 0; color: var(--text-secondary); }
 
+/* Status block (structured block at end of message) */
+.status-block {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.status-block-header {
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.status-block-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid;
+  letter-spacing: 0.3px;
+}
+
+.status-block-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.status-block-section {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+.status-block-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Inline metric bars */
+.inline-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.inline-metric-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.inline-metric-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inline-metric-value {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.inline-metric-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: visible;
+  position: relative;
+}
+
+.inline-metric-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.inline-metric-threshold {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 12px;
+  background: var(--text-muted);
+  border-radius: 1px;
+}
+
+/* Comparison bars (ДО / ПОСЛЕ) */
+.inline-comparison {
+  margin: 8px 0;
+}
+
+.inline-comparison-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.inline-comparison-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inline-comparison-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-comparison-tag {
+  font-size: 10px;
+  font-weight: 700;
+  width: 45px;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.inline-comparison-val {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 60px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
 .message-user .message-bubble {
   background: var(--user-bubble);
   border-bottom-right-radius: 4px;
