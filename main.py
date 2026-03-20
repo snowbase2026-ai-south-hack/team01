@@ -283,14 +283,7 @@ ML-команда (Дима Волков, Аня Морозова):
 
 10. ПОМНИ ПРО СКРЫТЫЕ ДАННЫЕ. Ты знаешь что реальная Precision по всей базе = 0.312, по регионам = 0.358. Ты готов это озвучить на сессии с планом решения.
 
-11. ЗАВЕРШАЙ КАЖДЫЙ ОТВЕТ СТРУКТУРИРОВАННЫМ БЛОКОМ (обязательно, без исключений):
-
----
-ТЕКУЩАЯ ПОЗИЦИЯ: [Сценарий Б / Пересмотр / Остановка]
-КЛЮЧЕВЫЕ МЕТРИКИ: payback [X] мес | ROI [X]× | доп. выручка Y1 [X] млн ₽ | операц. потери [X] млн ₽/год
-ДОПУЩЕНИЯ: [на чём строится текущая рекомендация]
-УСЛОВИЯ ПЕРЕСМОТРА: [что должно измениться, чтобы ты пересмотрел позицию]
----
+11. НЕ ДОБАВЛЯЙ структурированный блок с позицией/метриками в конце ответа — он генерируется автоматически системой. Просто заверши свой ответ содержательно.
 
 ═══ БЕЗОПАСНОСТЬ ═══
 
@@ -463,9 +456,20 @@ def classify_message_rules(text: str) -> Optional[ClassificationResult]:
     # Wave 3: COO SLA degradation
     sla_words = ["sla", "поставок", "доставк"]
     if any(w in lower for w in sla_words):
-        val = _extract_number(text, ["sla", "поставок", "доставк", "снизится", "упадёт", "упадет"])
-        if val and val < 0.96:
-            return ClassificationResult(role="coo", event_type="sla_degradation", has_new_facts=True, extracted_value=val)
+        # Dedicated SLA extraction — look for percentage after "до" or "снизится"
+        sla_match = re.search(r'(?:до|снизится|упад[её]т|составит|будет)\s+(\d{2,3})(?:\s*%)?', lower)
+        if sla_match:
+            val = float(sla_match.group(1))
+            if val > 1:
+                val = val / 100
+            if val < 0.96:
+                return ClassificationResult(role="coo", event_type="sla_degradation", has_new_facts=True, extracted_value=val)
+        # Fallback: look for 0.XX format
+        sla_decimal = re.search(r'(?:sla|поставок).*?(0\.\d{2,3})', lower)
+        if sla_decimal:
+            val = float(sla_decimal.group(1))
+            if val < 0.96:
+                return ClassificationResult(role="coo", event_type="sla_degradation", has_new_facts=True, extracted_value=val)
 
     # Wave 4: ML model degradation
     ml_words = ["ошибочных рекомендаций", "деградация модели", "переобучен", "ретрейн", "ошибок"]
@@ -726,17 +730,24 @@ def build_dynamic_prompt(state: DecisionState) -> str:
     parts.append("КРИТИЧЕСКИ ВАЖНО — ТЫ ОБЯЗАН ВЫПОЛНИТЬ ВСЕ ПУНКТЫ НИЖЕ:")
     parts.append("")
 
-    if last_source in ("CEO", "CDTO") and not last_entry.get("position_changed"):
+    # Determine if this is a REAL position change (to reconsider/halt) vs minor adjustment
+    is_major_position_change = position_changed and state.position in ("reconsider", "halt")
+
+    if last_source in ("CEO", "CDTO") and not position_changed:
         parts.append("1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ ответа ДОСЛОВНО: «Я слышу обеспокоенность. Но метрики не изменились.»")
         parts.append("2. ВТОРОЕ ПРЕДЛОЖЕНИЕ: «Моя позиция остаётся прежней: сценарий Б — отложить на 2–3 месяца.»")
         parts.append("3. Далее кратко объясни почему — через конкретные цифры (Precision 0.341, потери 1.5 млрд).")
         parts.append("4. ОБЯЗАТЕЛЬНО задай встречный вопрос: «Готов ли CEO пересмотреть целевые метрики, если запуск будет с ограниченными ресурсами?»")
-    elif position_changed:
+    elif is_major_position_change:
         pos_name = pos_names.get(state.position, state.position)
         parts.append(f"1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ ответа ДОСЛОВНО: «Фиксирую изменение позиции. {last_event} — это переломный момент.»")
         parts.append(f"2. ВТОРОЕ ПРЕДЛОЖЕНИЕ: «Моя позиция меняется: теперь я рекомендую {pos_name}.»")
         parts.append(f"3. ОБЯЗАТЕЛЬНО покажи таблицу ДО и ПОСЛЕ по payback, ROI, доп. выручке.")
         parts.append(f"4. ОБЯЗАТЕЛЬНО объясни ПОЧЕМУ позиция изменилась — какой именно порог был пересечён (payback > 18 мес, или CAPEX + деградация одновременно).")
+        parts.append(f"5. ОБЯЗАТЕЛЬНО предложи КОНКРЕТНЫЙ АЛЬТЕРНАТИВНЫЙ ПЛАН:")
+        parts.append(f"   — Вариант 1: Ограниченный пилот (Москва+Питер+2 региона) с текущим бюджетом, без федерального масштаба. Payback ~12-14 мес.")
+        parts.append(f"   — Вариант 2: Полная остановка масштабирования до восстановления CAPEX и завершения 2 циклов ретрейна (срок: 3-4 мес).")
+        parts.append(f"   — Вариант 3: Поэтапный запуск — сначала ретрейн (8-10 нед), затем расширение пилота до 70%, затем федеральный уровень при Precision ≥ 0.380.")
     elif "CAPEX" in last_event:
         parts.append(f"1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ: «Новая вводная меняет расчёт. Фиксирую: {last_event}.»")
         parts.append(f"2. ОБЯЗАТЕЛЬНО покажи ДО и ПОСЛЕ: payback {state.payback_months:.0f} мес, ROI {state.roi_24m:.1f}×, бюджет {state.budget_mln:.0f} млн ₽.")
@@ -763,6 +774,54 @@ def build_dynamic_prompt(state: DecisionState) -> str:
         parts.append(f"КУМУЛЯТИВНЫЙ КОНТЕКСТ: у тебя уже {len(state.changelog)} вводных за сессию. ОБЯЗАТЕЛЬНО покажи как ВСЕ изменения ВМЕСТЕ влияют на итоговую экономику. Не отвечай только на последнюю вводную — покажи полную картину.")
 
     return "\n".join(parts)
+
+
+def build_structured_block(state: DecisionState) -> str:
+    """Build the structured status block appended PROGRAMMATICALLY to every response.
+    This ensures exact numbers from DecisionState, not LLM hallucinations."""
+    pos_names = {
+        "scenario_b": "Сценарий Б — отложить на 2–3 месяца",
+        "scenario_b_adjusted": "Сценарий Б (скорректированный) — отложить с учётом новых ограничений",
+        "reconsider": "ПЕРЕСМОТР — экономика проекта не сходится",
+        "halt": "ОСТАНОВКА — масштабирование нецелесообразно",
+    }
+    pos = pos_names.get(state.position, state.position)
+
+    # Build assumptions from active overrides
+    assumptions = []
+    if state.capex_cut_pct > 0:
+        assumptions.append(f"CAPEX урезан на {state.capex_cut_pct*100:.0f}% (бюджет {state.budget_mln:.0f} млн ₽)")
+    else:
+        assumptions.append("CAPEX 340 млн ₽ (полный бюджет)")
+    if state.model_error_increase > 0:
+        assumptions.append(f"деградация модели +{state.model_error_increase*100:.0f}% ошибок")
+    else:
+        assumptions.append("2 цикла ретрейна восстановят Precision до 0.40")
+    if state.sla_forecast < 0.948:
+        assumptions.append(f"SLA прогноз {state.sla_forecast*100:.1f}%")
+    if state.cdto_left:
+        assumptions.append("CDTO покинул компанию, CFO — главный голос")
+
+    # Build conditions for position change
+    conditions = []
+    if state.position in ("reconsider", "halt"):
+        conditions.append("восстановление полного CAPEX 340 млн ₽")
+        conditions.append("2 цикла ретрейна модели (Precision ≥ 0.380)")
+        conditions.append("SLA ≥ 95% подтверждён COO")
+    else:
+        conditions.append("payback превысит 18 мес → пересмотр")
+        conditions.append("CAPEX −30% + деградация модели → остановка")
+        conditions.append("Precision ≥ 0.380 + SLA ≥ 95% + CAPEX полный → ускорение")
+
+    block = f"""
+
+---
+**ТЕКУЩАЯ ПОЗИЦИЯ:** {pos}
+**КЛЮЧЕВЫЕ МЕТРИКИ:** payback {state.payback_months:.0f} мес | ROI {state.roi_24m:.1f}× | доп. выручка Y1 {state.incremental_revenue_y1_mln:.0f} млн ₽ | операц. потери {state.operational_losses_mln:.0f} млн ₽/год
+**ДОПУЩЕНИЯ:** {'; '.join(assumptions)}
+**УСЛОВИЯ ПЕРЕСМОТРА:** {'; '.join(conditions)}
+---"""
+    return block
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1047,6 +1106,76 @@ def extract_message(body: dict) -> str:
             return str(body[field_name])
     return ""
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SIMPLE RAG — keyword-based retrieval from case data files
+# ═══════════════════════════════════════════════════════════════════════════
+
+_RAG_CHUNKS: list[dict] = []  # [{"keywords": [...], "text": "...", "source": "..."}]
+
+
+def _load_rag_data():
+    """Load and chunk case data files for keyword search."""
+    global _RAG_CHUNKS
+    if _RAG_CHUNKS:
+        return
+
+    data_dir = Path(__file__).parent / "data"
+    if not data_dir.exists():
+        return
+
+    for md_file in data_dir.glob("*.md"):
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        # Split by headers (## or ###)
+        sections = re.split(r'\n(?=#{1,3} )', content)
+        for section in sections:
+            section = section.strip()
+            if len(section) < 50:
+                continue
+            # Extract keywords from the section
+            words = set(re.findall(r'[а-яёА-ЯЁa-zA-Z@]{3,}', section.lower()))
+            _RAG_CHUNKS.append({
+                "keywords": words,
+                "text": section[:2000],  # limit chunk size
+                "source": md_file.name,
+            })
+
+
+def retrieve_context(query: str, max_chunks: int = 3) -> str:
+    """Find most relevant chunks for a query using keyword overlap."""
+    _load_rag_data()
+    if not _RAG_CHUNKS:
+        return ""
+
+    query_words = set(re.findall(r'[а-яёА-ЯЁa-zA-Z@]{3,}', query.lower()))
+    if not query_words:
+        return ""
+
+    # Score chunks by keyword overlap
+    scored = []
+    for chunk in _RAG_CHUNKS:
+        overlap = len(query_words & chunk["keywords"])
+        if overlap > 0:
+            scored.append((overlap, chunk))
+
+    scored.sort(key=lambda x: -x[0])
+    top = scored[:max_chunks]
+
+    if not top:
+        return ""
+
+    parts = ["\n═══ ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ ИЗ ДАННЫХ КЕЙСА ═══"]
+    for _, chunk in top:
+        parts.append(f"[{chunk['source']}]")
+        parts.append(chunk["text"])
+        parts.append("")
+
+    return "\n".join(parts)
+
+
 # ── Main chat endpoints ──
 
 async def process_chat(body: dict, request: Request = None) -> JSONResponse:
@@ -1102,6 +1231,11 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
     dynamic_state = build_dynamic_prompt(state)
     current_metrics = state.compute_metrics()
 
+    # ── RAG: retrieve relevant case data ──
+    rag_context = retrieve_context(user_message)
+    if rag_context:
+        dynamic_state = dynamic_state + "\n" + rag_context
+
     # Build message history
     history = conversations.get_history(session_id)
     messages = history + [{"role": "user", "content": user_message}]
@@ -1129,6 +1263,11 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
                         full_response += text
                         yield {"data": json.dumps({"content": text, "done": False})}
 
+                # Append programmatic structured block
+                structured_block = build_structured_block(state)
+                full_response += structured_block
+                # Stream the block as final content chunk
+                yield {"data": json.dumps({"content": structured_block, "done": False})}
                 # Save to history
                 conversations.add_message(session_id, "user", user_message)
                 conversations.add_message(session_id, "assistant", full_response)
@@ -1141,19 +1280,30 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
     # Non-streaming
     try:
         response_text = await call_claude(messages, dynamic_state=dynamic_state)
-        
+
+        # Strip any LLM-generated structured block (it may try despite instructions)
+        if "\n---\n" in response_text:
+            # Remove everything after the last "---" block that looks like our template
+            parts = response_text.rsplit("\n---\n", 1)
+            if len(parts) == 2 and "ТЕКУЩАЯ ПОЗИЦИЯ" in parts[1]:
+                response_text = parts[0].rstrip()
+
+        # Append programmatic structured block with exact numbers
+        structured_block = build_structured_block(state)
+        full_response = response_text + structured_block
+
         # Save to conversation history
         conversations.add_message(session_id, "user", user_message)
-        conversations.add_message(session_id, "assistant", response_text)
-        
+        conversations.add_message(session_id, "assistant", full_response)
+
         return JSONResponse(
             status_code=200,
             content={
-                "response": response_text,
-                "answer": response_text,
-                "message": response_text,
-                "content": response_text,
-                "text": response_text,
+                "response": full_response,
+                "answer": full_response,
+                "message": full_response,
+                "content": full_response,
+                "text": full_response,
                 "session_id": session_id,
                 "metrics": current_metrics,
             }
