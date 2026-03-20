@@ -1276,31 +1276,98 @@ class ChatResponse(BaseModel):
     session_id: str = "default"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# CLAUDE API CLIENT
+# MODEL REGISTRY & RUNTIME SETTINGS
 # ═══════════════════════════════════════════════════════════════════════════
 
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-haiku")
+AVAILABLE_MODELS = {
+    "openrouter": {
+        "name": "OpenRouter",
+        "models": [
+            {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "type": "llm"},
+            {"id": "anthropic/claude-3.5-haiku", "name": "Claude 3.5 Haiku", "type": "llm"},
+            {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "type": "llm"},
+            {"id": "anthropic/claude-opus-4", "name": "Claude Opus 4", "type": "llm"},
+            {"id": "google/gemini-2.5-flash-preview", "name": "Gemini 2.5 Flash", "type": "llm"},
+            {"id": "google/gemini-2.5-pro-preview", "name": "Gemini 2.5 Pro", "type": "llm"},
+            {"id": "openai/gpt-4o", "name": "GPT-4o", "type": "llm"},
+            {"id": "openai/gpt-4.1", "name": "GPT-4.1", "type": "llm"},
+            {"id": "deepseek/deepseek-r1", "name": "DeepSeek R1", "type": "llm"},
+        ],
+    },
+    "cloudru": {
+        "name": "Cloud.ru",
+        "models": [
+            {"id": "GigaChat/GigaChat-2-Max", "name": "GigaChat-2-Max", "type": "llm"},
+            {"id": "ai-sage/GigaChat3-10B-A1.8B", "name": "GigaChat3-10B", "type": "llm"},
+            {"id": "MiniMaxAI/MiniMax-M2", "name": "MiniMax M2", "type": "llm"},
+            {"id": "zai-org/GLM-4.7-Flash", "name": "GLM-4.7 Flash", "type": "llm"},
+            {"id": "zai-org/GLM-4.7", "name": "GLM-4.7", "type": "llm"},
+            {"id": "zai-org/GLM-4.6", "name": "GLM-4.6", "type": "llm"},
+            {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B", "type": "llm"},
+            {"id": "Qwen/Qwen3-Coder-Next", "name": "Qwen3 Coder Next", "type": "llm"},
+            {"id": "Qwen/Qwen3-Coder-480B-A35B-Instruct", "name": "Qwen3 Coder 480B", "type": "llm"},
+            {"id": "Qwen/Qwen3-235B-A22B-Instruct-2507", "name": "Qwen3 235B", "type": "llm"},
+            {"id": "Qwen/Qwen3-Next-80B-A3B-Instruct", "name": "Qwen3 Next 80B", "type": "llm"},
+            {"id": "t-tech/T-lite-it-2.1", "name": "T-lite 2.1", "type": "llm"},
+            {"id": "t-tech/T-pro-it-2.1", "name": "T-pro 2.1", "type": "llm"},
+            {"id": "t-tech/T-pro-it-2.0", "name": "T-pro 2.0", "type": "llm"},
+            {"id": "t-tech/T-lite-it-1.0", "name": "T-lite 1.0", "type": "llm"},
+            {"id": "t-tech/T-pro-it-1.0", "name": "T-pro 1.0", "type": "llm"},
+            {"id": "deepseek-ai/DeepSeek-OCR-2", "name": "DeepSeek OCR-2", "type": "image+text-to-text"},
+            {"id": "openai/whisper-large-v3", "name": "Whisper Large v3", "type": "audio-to-text"},
+            {"id": "Qwen/Qwen3-Embedding-0.6B", "name": "Qwen3 Embedding 0.6B", "type": "embedder"},
+            {"id": "BAAI/bge-m3", "name": "BGE-M3", "type": "embedder"},
+            {"id": "Qwen/Qwen3-Reranker-0.6B", "name": "Qwen3 Reranker 0.6B", "type": "rerank"},
+            {"id": "BAAI/bge-reranker-v2-m3", "name": "BGE Reranker v2 M3", "type": "rerank"},
+        ],
+    },
+}
+
+
+class RuntimeSettings:
+    """Mutable runtime settings for model/provider selection."""
+    def __init__(self):
+        self.provider: str = "openrouter"
+        self.model: str = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
+
+    def get_client(self) -> OpenAI:
+        if self.provider == "cloudru":
+            api_key = os.getenv("CLOUDRU_API_KEY", "")
+            base_url = os.getenv("CLOUDRU_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+            if not api_key:
+                raise ValueError("CLOUDRU_API_KEY not set")
+            return OpenAI(base_url=base_url, api_key=api_key)
+        else:
+            api_key = os.getenv("OPENROUTER_API_KEY", "")
+            if not api_key:
+                raise ValueError("OPENROUTER_API_KEY not set")
+            return OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+
+    def to_dict(self) -> dict:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "provider_name": AVAILABLE_MODELS.get(self.provider, {}).get("name", self.provider),
+        }
+
+
+runtime_settings = RuntimeSettings()
+
 
 def get_client():
-    api_key = os.getenv("OPENROUTER_API_KEY", "")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY not set")
-    return OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
-    )
+    return runtime_settings.get_client()
+
 
 async def call_claude(messages: list[dict], stream: bool = False, dynamic_state: str = ""):
-    """Call LLM via OpenRouter."""
+    """Call LLM via current provider."""
     client = get_client()
 
-    # Prepend system message with optional dynamic state
     system_content = SYSTEM_PROMPT + dynamic_state
     full_messages = [{"role": "system", "content": system_content}] + messages
 
     if stream:
         return client.chat.completions.create(
-            model=OPENROUTER_MODEL,
+            model=runtime_settings.model,
             max_tokens=4096,
             messages=full_messages,
             temperature=0.3,
@@ -1309,7 +1376,7 @@ async def call_claude(messages: list[dict], stream: bool = False, dynamic_state:
     else:
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model=OPENROUTER_MODEL,
+            model=runtime_settings.model,
             max_tokens=4096,
             messages=full_messages,
             temperature=0.3,
@@ -1568,7 +1635,7 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
                 system_content = SYSTEM_PROMPT + dynamic_state
                 stream_response = await asyncio.to_thread(
                     lambda: get_client().chat.completions.create(
-                        model=OPENROUTER_MODEL,
+                        model=runtime_settings.model,
                         max_tokens=4096,
                         messages=[{"role": "system", "content": system_content}] + messages,
                         temperature=0.3,
@@ -1758,6 +1825,45 @@ async def get_session_history(session_id: str):
             "turn": state.turn,
         },
         "metrics": state.compute_metrics(),
+    }
+
+
+# ── Settings API ──
+
+@app.get("/api/settings")
+async def get_settings():
+    """Get current runtime settings."""
+    return runtime_settings.to_dict()
+
+
+@app.post("/api/settings")
+async def update_settings(request: Request):
+    """Update runtime settings (provider/model)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Невалидный JSON"})
+
+    provider = body.get("provider")
+    model = body.get("model")
+
+    if provider and provider in AVAILABLE_MODELS:
+        runtime_settings.provider = provider
+    elif provider:
+        return JSONResponse(status_code=400, content={"error": f"Неизвестный провайдер: {provider}"})
+
+    if model:
+        runtime_settings.model = model
+
+    return runtime_settings.to_dict()
+
+
+@app.get("/api/models")
+async def list_models():
+    """List all available models grouped by provider."""
+    return {
+        "providers": AVAILABLE_MODELS,
+        "current": runtime_settings.to_dict(),
     }
 
 

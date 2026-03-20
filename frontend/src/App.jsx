@@ -1,6 +1,7 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import MetricsSidebar from './components/MetricsSidebar'
 import Chat from './components/Chat'
+const Settings = lazy(() => import('./components/Settings'))
 
 const API_BASE = '/api'
 
@@ -30,6 +31,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState(getStoredSessionId)
   const [sessions, setSessions] = useState([])
   const [showSessions, setShowSessions] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [metrics, setMetrics] = useState({
     confidence: 0,
     pressure: 0,
@@ -255,6 +257,7 @@ export default function App() {
           <span className="logo-sub">Chief AI & Technology Officer</span>
         </div>
         <div className="header-actions">
+          <button className="btn btn-settings" onClick={() => setShowSettings(true)} title="Настройки модели">⚙</button>
           <button className="btn" onClick={handleToggleSessions}>Сессии</button>
           <button className="btn" onClick={handleReset}>Сброс</button>
           <button className="btn btn-primary" onClick={handleNewSession}>Новая сессия</button>
@@ -290,6 +293,12 @@ export default function App() {
         <MetricsSidebar metrics={metrics} messages={messages} />
         <Chat messages={messages} onSend={sendMessage} isLoading={isLoading} />
       </div>
+
+      {showSettings && (
+        <Suspense fallback={null}>
+          <Settings onClose={() => setShowSettings(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }

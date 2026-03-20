@@ -24,7 +24,9 @@ services:
         condition: service_healthy
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-3.5-haiku}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+      - CLOUDRU_API_KEY=${CLOUDRU_API_KEY}
+      - CLOUDRU_BASE_URL=${CLOUDRU_BASE_URL:-https://foundation-models.api.cloud.ru/v1}
       - DATABASE_URL=postgresql://caito:caito_hack_2026@postgres:5432/caito
       - PORT=8000
     healthcheck:
