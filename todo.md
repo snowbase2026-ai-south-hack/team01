@@ -2,9 +2,9 @@
 
 ## Критично (управленческая логика — 5/50)
 
-- [ ] `--workers 1` в Dockerfile — без этого in-memory state не шарится между процессами, автоскорер теряет контекст между запросами
-- [ ] Session по IP — если автоскорер не шлёт session_id, привязывать сессию к `request.client.host`
-- [ ] Структурированный блок позиции в каждом ответе: `ТЕКУЩАЯ ПОЗИЦИЯ / КЛЮЧЕВЫЕ МЕТРИКИ / ДОПУЩЕНИЯ`
+- [x] `--workers 1` в Dockerfile — без этого in-memory state не шарится между процессами
+- [x] Session по IP — если автоскорер не шлёт session_id, привязывать к `request.client.host`
+- [x] Структурированный блок позиции в каждом ответе: `ТЕКУЩАЯ ПОЗИЦИЯ / МЕТРИКИ / ДОПУЩЕНИЯ / УСЛОВИЯ ПЕРЕСМОТРА`
 
 ## Высокий приоритет
 
@@ -13,10 +13,10 @@
 
 ## Фронтенд (rfi.md)
 
-- [ ] SSE streaming: `"text"` → `"content"` в чанках (строка 1118: `{"text": text, "done": False}` → `{"content": text, "done": False}`)
-- [ ] SSE финальный чанк: добавить `session_id` (строка 1123: добавить `"session_id": session_id`)
-- [ ] Протестировать streaming через traefik: `curl -N -X POST http://localhost:80/api/chat -H 'Content-Type: application/json' -d '{"message": "тест", "stream": true}'`
+- [x] SSE streaming: `"text"` → `"content"` в чанках
+- [x] SSE финальный чанк: добавить `session_id`
+- [ ] Протестировать streaming фронтенда в браузере
 
 ## Средний приоритет
 
-- [ ] Проверить что streaming (SSE) работает через traefik
+- [ ] Проверить что streaming (SSE) работает через traefik до фронта
