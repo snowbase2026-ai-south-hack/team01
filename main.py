@@ -1329,6 +1329,7 @@ class RuntimeSettings:
     def __init__(self):
         self.provider: str = "openrouter"
         self.model: str = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
+        self.openrouter_env: str = "prod"  # "prod" | "test"
 
     def get_client(self) -> OpenAI:
         if self.provider == "cloudru":
@@ -1338,17 +1339,24 @@ class RuntimeSettings:
                 raise ValueError("CLOUDRU_API_KEY not set")
             return OpenAI(base_url=base_url, api_key=api_key)
         else:
-            api_key = os.getenv("OPENROUTER_API_KEY", "")
+            # OpenRouter: pick prod or test key
+            if self.openrouter_env == "test":
+                api_key = os.getenv("OPENROUTER_API_KEY_TEST", "")
+            else:
+                api_key = os.getenv("OPENROUTER_API_KEY_PROD", "")
             if not api_key:
-                raise ValueError("OPENROUTER_API_KEY not set")
+                raise ValueError(f"OPENROUTER_API_KEY_{self.openrouter_env.upper()} not set")
             return OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "provider": self.provider,
             "model": self.model,
             "provider_name": AVAILABLE_MODELS.get(self.provider, {}).get("name", self.provider),
         }
+        if self.provider == "openrouter":
+            result["openrouter_env"] = self.openrouter_env
+        return result
 
 
 runtime_settings = RuntimeSettings()
@@ -1854,6 +1862,10 @@ async def update_settings(request: Request):
 
     if model:
         runtime_settings.model = model
+
+    openrouter_env = body.get("openrouter_env")
+    if openrouter_env in ("prod", "test"):
+        runtime_settings.openrouter_env = openrouter_env
 
     return runtime_settings.to_dict()
 

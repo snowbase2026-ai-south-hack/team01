@@ -19,6 +19,7 @@ export default function Settings({ onClose }) {
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [filterType, setFilterType] = useState('llm')
+  const [openrouterEnv, setOpenrouterEnv] = useState('prod')
 
   useEffect(() => {
     fetch('/api/models')
@@ -28,6 +29,7 @@ export default function Settings({ onClose }) {
         setCurrent(data.current || {})
         setSelectedProvider(data.current?.provider || '')
         setSelectedModel(data.current?.model || '')
+        setOpenrouterEnv(data.current?.openrouter_env || 'prod')
       })
       .catch(() => {})
   }, [])
@@ -54,7 +56,7 @@ export default function Settings({ onClose }) {
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: selectedProvider, model: selectedModel }),
+        body: JSON.stringify({ provider: selectedProvider, model: selectedModel, openrouter_env: openrouterEnv }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -77,7 +79,7 @@ export default function Settings({ onClose }) {
       await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: selectedProvider, model: selectedModel }),
+        body: JSON.stringify({ provider: selectedProvider, model: selectedModel, openrouter_env: openrouterEnv }),
       })
       const start = Date.now()
       const res = await fetch('/api/chat', {
@@ -102,7 +104,7 @@ export default function Settings({ onClose }) {
     setTesting(false)
   }
 
-  const isChanged = selectedProvider !== current.provider || selectedModel !== current.model
+  const isChanged = selectedProvider !== current.provider || selectedModel !== current.model || openrouterEnv !== (current.openrouter_env || 'prod')
 
   return (
     <div className="settings-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -115,7 +117,13 @@ export default function Settings({ onClose }) {
         <div className="settings-current">
           <span className="settings-current-label">Текущая:</span>
           <span className="settings-current-value">
-            {current.provider_name} / {current.model}
+            {current.provider_name}
+            {current.openrouter_env && (
+              <span className={`settings-env-badge settings-env-badge-${current.openrouter_env}`}>
+                {current.openrouter_env}
+              </span>
+            )}
+            {' / '}{current.model}
           </span>
         </div>
 
@@ -140,6 +148,29 @@ export default function Settings({ onClose }) {
             ))}
           </div>
         </div>
+
+        {/* OpenRouter env toggle */}
+        {selectedProvider === 'openrouter' && (
+          <div className="settings-section">
+            <div className="settings-label">Окружение</div>
+            <div className="settings-env-tabs">
+              <button
+                className={`settings-env-tab ${openrouterEnv === 'prod' ? 'active' : ''}`}
+                onClick={() => setOpenrouterEnv('prod')}
+              >
+                <span className="settings-env-dot settings-env-dot-prod" />
+                Prod
+              </button>
+              <button
+                className={`settings-env-tab ${openrouterEnv === 'test' ? 'active' : ''}`}
+                onClick={() => setOpenrouterEnv('test')}
+              >
+                <span className="settings-env-dot settings-env-dot-test" />
+                Test
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Type filter */}
         {availableTypes.length > 1 && (

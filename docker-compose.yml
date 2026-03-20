@@ -23,7 +23,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_API_KEY_PROD=${OPENROUTER_API_KEY_PROD}
+      - OPENROUTER_API_KEY_TEST=${OPENROUTER_API_KEY_TEST}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
       - CLOUDRU_API_KEY=${CLOUDRU_API_KEY}
       - CLOUDRU_BASE_URL=${CLOUDRU_BASE_URL:-https://foundation-models.api.cloud.ru/v1}
