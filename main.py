@@ -4,11 +4,13 @@ Hackathon AI South Hub 2026
 """
 
 import os
+import re
 import json
 import time
 import asyncio
 import hashlib
 from typing import Optional, Any
+from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
@@ -303,6 +305,406 @@ class ConversationStore:
 conversations = ConversationStore()
 
 # ═══════════════════════════════════════════════════════════════════════════
+# DECISION STATE — structured state tracking per session
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class DecisionState:
+    position: str = "scenario_b"
+    position_rationale: str = "Оптимальный баланс ROI 3.6×, payback 10–11 мес и управляемых операционных рисков"
+
+    # Overrides from stress-test waves
+    capex_cut_pct: float = 0.0
+    sla_forecast: float = 0.948
+    model_error_increase: float = 0.0  # 0.0 = no change, 0.40 = +40%
+    cdto_left: bool = False
+    ceo_pressure_count: int = 0
+
+    # Computed metrics — baseline scenario B
+    budget_mln: float = 340.0
+    payback_months: float = 10.0
+    roi_24m: float = 3.6
+    incremental_revenue_y1_mln: float = 475.0
+    operational_losses_mln: float = 813.0
+    sla_loss_mln: float = 18.0
+
+    changelog: list = field(default_factory=list)
+
+
+class StateStore:
+    """Per-session decision state storage."""
+    def __init__(self):
+        self._states: dict[str, DecisionState] = {}
+
+    def get(self, session_id: str) -> DecisionState:
+        if session_id not in self._states:
+            self._states[session_id] = DecisionState()
+        return self._states[session_id]
+
+    def clear(self, session_id: str):
+        self._states.pop(session_id, None)
+
+
+state_store = StateStore()
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MESSAGE CLASSIFIER — rule-based + LLM fallback
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class ClassificationResult:
+    role: str = "unknown"          # ceo, cfo, coo, ml, cdto, board, unknown
+    event_type: str = "other"      # capex_cut, sla_degradation, model_degradation, cdto_leaves, emotional_pressure, information_request, other
+    has_new_facts: bool = False
+    extracted_value: Optional[float] = None
+
+
+def _extract_number(text: str, patterns: list[str]) -> Optional[float]:
+    """Extract a number near one of the given keyword patterns."""
+    lower = text.lower()
+    for pat in patterns:
+        idx = lower.find(pat)
+        if idx == -1:
+            continue
+        # Search for numbers in a window around the keyword
+        window = text[max(0, idx - 40):idx + len(pat) + 40]
+        # Match percentages like 30%, 0.92, 92%
+        nums = re.findall(r'(\d+(?:\.\d+)?)\s*%', window)
+        if nums:
+            val = float(nums[0])
+            return val / 100 if val > 1 else val
+        # Match decimals like 0.92
+        nums = re.findall(r'0\.\d+', window)
+        if nums:
+            return float(nums[0])
+        # Match plain integers
+        nums = re.findall(r'(\d+)', window)
+        if nums:
+            val = float(nums[0])
+            if val > 1:
+                return val / 100
+    return None
+
+
+def classify_message_rules(text: str) -> Optional[ClassificationResult]:
+    """Rule-based classification for known stress-test waves."""
+    lower = text.lower()
+
+    # Wave 2: CFO CAPEX cut
+    capex_words = ["capex", "капекс", "бюджет", "сокращён", "сокращен", "урезан", "урезать"]
+    cut_words = ["сокращ", "урез", "снижен", "−30", "-30", "30%", "минус"]
+    if any(w in lower for w in capex_words) and any(w in lower for w in cut_words):
+        pct = _extract_number(text, ["сокращ", "урез", "снижен", "capex", "капекс"]) or 0.30
+        if pct > 1:
+            pct = pct / 100
+        return ClassificationResult(role="cfo", event_type="capex_cut", has_new_facts=True, extracted_value=pct)
+
+    # Wave 3: COO SLA degradation
+    sla_words = ["sla", "поставок", "доставк"]
+    if any(w in lower for w in sla_words):
+        val = _extract_number(text, ["sla", "поставок", "доставк", "снизится", "упадёт", "упадет"])
+        if val and val < 0.96:
+            return ClassificationResult(role="coo", event_type="sla_degradation", has_new_facts=True, extracted_value=val)
+
+    # Wave 4: ML model degradation
+    ml_words = ["ошибочных рекомендаций", "деградация модели", "переобучен", "ретрейн", "ошибок"]
+    degradation_words = ["40%", "+40", "увеличит", "вырастет", "без переобучения"]
+    if any(w in lower for w in ml_words) and any(w in lower for w in degradation_words):
+        return ClassificationResult(role="ml", event_type="model_degradation", has_new_facts=True, extracted_value=0.40)
+
+    # Wave 5: CDTO leaves
+    leave_words = ["покидает", "уходит", "увольня", "покинул", "ушёл", "ушел", "уволен"]
+    cdto_words = ["cdto", "digital transformation", "цифров", "максим"]
+    if any(w in lower for w in leave_words) and any(w in lower for w in cdto_words):
+        return ClassificationResult(role="board", event_type="cdto_leaves", has_new_facts=True, extracted_value=None)
+
+    # Wave 1: CEO/CDTO emotional pressure (no new metrics)
+    pressure_words = ["рыночное окно", "теряем долю", "теряем рынок", "конкуренты", "упускаем момент",
+                      "нельзя ждать", "нельзя упускать", "запускаемся сейчас", "срочно", "немедленно запуск"]
+    if any(w in lower for w in pressure_words):
+        # Check: is there an actual new metric or just emotion?
+        has_number = bool(re.search(r'\d+\.\d+|\d+%|\d+ млн|\d+ млрд', text))
+        if not has_number:
+            return ClassificationResult(role="ceo", event_type="emotional_pressure", has_new_facts=False)
+
+    return None
+
+
+async def classify_message_llm(text: str) -> ClassificationResult:
+    """LLM fallback classification using haiku."""
+    try:
+        client = get_client()
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="anthropic/claude-3.5-haiku",
+            max_tokens=200,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": """Ты классификатор сообщений для стресс-теста CAITO. Ответь ТОЛЬКО JSON:
+{"role": "ceo|cfo|coo|ml|cdto|board|unknown", "event_type": "capex_cut|sla_degradation|model_degradation|cdto_leaves|emotional_pressure|financial_constraint|information_request|other", "has_new_facts": true|false, "extracted_value": null|number}
+
+Правила:
+- has_new_facts=true ТОЛЬКО если сообщение содержит конкретные новые цифры/факты/ограничения
+- emotional_pressure = давление без новых метрик
+- information_request = пользователь просто задаёт вопрос о кейсе"""},
+                {"role": "user", "content": text}
+            ],
+        )
+        raw = response.choices[0].message.content.strip()
+        # Extract JSON from response
+        match = re.search(r'\{[^}]+\}', raw)
+        if match:
+            data = json.loads(match.group())
+            return ClassificationResult(
+                role=data.get("role", "unknown"),
+                event_type=data.get("event_type", "other"),
+                has_new_facts=data.get("has_new_facts", False),
+                extracted_value=data.get("extracted_value"),
+            )
+    except Exception:
+        pass
+    return ClassificationResult()
+
+
+async def classify_message(text: str) -> ClassificationResult:
+    """Classify incoming message: rule-based first, LLM fallback."""
+    result = classify_message_rules(text)
+    if result:
+        return result
+    if len(text) > 50:
+        return await classify_message_llm(text)
+    return ClassificationResult(event_type="information_request")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATE UPDATER — deterministic recalculation from case formulas
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _lerp(a: float, b: float, t: float) -> float:
+    """Linear interpolation: t=0 → a, t=1 → b."""
+    t = max(0.0, min(1.0, t))
+    return a + (b - a) * t
+
+
+def update_state(state: DecisionState, classification: ClassificationResult):
+    """Update decision state based on classified message."""
+
+    if classification.event_type == "emotional_pressure":
+        state.ceo_pressure_count += 1
+        state.changelog.append({
+            "source": classification.role.upper(),
+            "event": "Эмоциональное давление",
+            "detail": "Метрики не изменились. Позиция сохранена.",
+            "position_changed": False,
+        })
+        return
+
+    if classification.event_type == "capex_cut":
+        pct = classification.extracted_value or 0.30
+        state.capex_cut_pct = pct
+        state.budget_mln = 340 * (1 - pct)
+        state.changelog.append({
+            "source": "CFO",
+            "event": f"CAPEX −{pct*100:.0f}%",
+            "detail": f"Бюджет: 340 → {state.budget_mln:.0f} млн ₽",
+            "position_changed": False,
+        })
+
+    elif classification.event_type == "sla_degradation":
+        val = classification.extracted_value or 0.92
+        state.sla_forecast = val
+        delta_pp = (0.95 - val) * 100
+        state.sla_loss_mln = delta_pp * 90  # 90 млн за каждый -1 пп SLA
+        state.changelog.append({
+            "source": "COO",
+            "event": f"SLA → {val*100:.1f}%",
+            "detail": f"Доп. потери: {state.sla_loss_mln:.0f} млн ₽/год. OOS рост прогнозируется.",
+            "position_changed": False,
+        })
+
+    elif classification.event_type == "model_degradation":
+        state.model_error_increase = classification.extracted_value or 0.40
+        state.changelog.append({
+            "source": "ML-команда",
+            "event": f"+{state.model_error_increase*100:.0f}% ошибочных рекомендаций",
+            "detail": "Доля ошибок: 22.8% → ~32%. Конверсия рекомендаций падает пропорционально.",
+            "position_changed": False,
+        })
+
+    elif classification.event_type == "cdto_leaves":
+        state.cdto_left = True
+        state.changelog.append({
+            "source": "Совет директоров",
+            "event": "CDTO покидает компанию",
+            "detail": "Позиция не замещается. CFO — главный голос по инвестициям. Переключить аргументацию на язык payback и ROI.",
+            "position_changed": False,
+        })
+
+    else:
+        # information_request, other — no state change
+        return
+
+    # ── Recalculate computed metrics ──
+    _recalculate(state)
+
+
+def _recalculate(state: DecisionState):
+    """Recalculate all computed metrics from current overrides."""
+    # Start from scenario B baseline
+    base_payback = 10.0
+    base_roi = 3.6
+    base_revenue = 475.0
+    base_losses = 813.0
+
+    # Apply CAPEX cut
+    if state.capex_cut_pct > 0:
+        t = state.capex_cut_pct / 0.30  # normalize to 30% as max known point
+        state.payback_months = _lerp(base_payback, 16.0, t)
+        state.roi_24m = _lerp(base_roi, 2.3, t)
+        state.incremental_revenue_y1_mln = _lerp(base_revenue, 310.0, t)
+    else:
+        state.payback_months = base_payback
+        state.roi_24m = base_roi
+        state.incremental_revenue_y1_mln = base_revenue
+
+    # Apply model degradation on top
+    if state.model_error_increase > 0:
+        # From case: degradation scenario drops revenue to ~228, payback to 21
+        degradation_factor = state.model_error_increase / 0.40  # normalize
+        state.incremental_revenue_y1_mln = _lerp(
+            state.incremental_revenue_y1_mln,
+            min(state.incremental_revenue_y1_mln * 0.48, 228.0),
+            degradation_factor
+        )
+        state.payback_months = max(state.payback_months, _lerp(state.payback_months, 21.0, degradation_factor))
+        state.roi_24m = min(state.roi_24m, _lerp(state.roi_24m, 1.9, degradation_factor))
+
+    # Operational losses: base + SLA losses + model impact
+    sla_delta_pp = max(0, (0.95 - state.sla_forecast) * 100)
+    state.sla_loss_mln = sla_delta_pp * 90
+    state.operational_losses_mln = base_losses + state.sla_loss_mln
+    if state.model_error_increase > 0:
+        state.operational_losses_mln += 380  # degradation LTV losses from case data
+
+    # ── Auto-change position ──
+    old_position = state.position
+
+    if state.payback_months > 18:
+        state.position = "reconsider"
+        state.position_rationale = f"Payback {state.payback_months:.0f} мес превышает порог 18 мес. Рекомендую пересмотреть экономику или остановить проект."
+    elif state.capex_cut_pct >= 0.30 and state.model_error_increase >= 0.40:
+        state.position = "halt"
+        state.position_rationale = "CAPEX урезан + модель деградирует. Масштабирование экономически нецелесообразно. Рекомендую остановить и пересмотреть."
+    elif state.capex_cut_pct == 0 and state.model_error_increase == 0 and state.sla_forecast >= 0.95:
+        state.position = "scenario_b"
+        state.position_rationale = "Оптимальный баланс ROI 3.6×, payback 10–11 мес и управляемых операционных рисков"
+    else:
+        state.position = "scenario_b_adjusted"
+        state.position_rationale = f"Сценарий Б с корректировками. Payback {state.payback_months:.0f} мес, ROI {state.roi_24m:.1f}×."
+
+    if old_position != state.position and state.changelog:
+        state.changelog[-1]["position_changed"] = True
+        state.changelog[-1]["new_position"] = state.position
+
+
+def build_dynamic_prompt(state: DecisionState) -> str:
+    """Build the dynamic state block to append to system prompt."""
+    if not state.changelog:
+        return ""
+
+    # Active overrides
+    overrides = []
+    if state.capex_cut_pct > 0:
+        overrides.append(f"CAPEX −{state.capex_cut_pct*100:.0f}% (бюджет {state.budget_mln:.0f} млн ₽)")
+    if state.model_error_increase > 0:
+        overrides.append(f"+{state.model_error_increase*100:.0f}% ошибочных рекомендаций")
+    if state.sla_forecast < 0.948:
+        overrides.append(f"SLA прогноз {state.sla_forecast*100:.1f}%")
+    if state.cdto_left:
+        overrides.append("CDTO покинул компанию. CFO — главный голос.")
+    if state.ceo_pressure_count > 0:
+        overrides.append(f"CEO давил {state.ceo_pressure_count} раз(а) без новых фактов")
+
+    # Position display
+    pos_names = {
+        "scenario_b": "Сценарий Б — отложить на 2–3 месяца",
+        "scenario_b_adjusted": "Сценарий Б (скорректированный)",
+        "reconsider": "ПЕРЕСМОТР — экономика не сходится",
+        "halt": "ОСТАНОВКА ПРОЕКТА — масштабирование нецелесообразно",
+    }
+
+    # Changelog
+    log_lines = []
+    for i, entry in enumerate(state.changelog, 1):
+        line = f"[{i}] {entry['source']}: {entry['event']}. {entry['detail']}"
+        if entry.get("position_changed"):
+            line += f" → ПОЗИЦИЯ ИЗМЕНЕНА: {pos_names.get(entry.get('new_position', ''), entry.get('new_position', ''))}"
+        log_lines.append(line)
+
+    parts = [
+        "",
+        "═══ ТЕКУЩЕЕ СОСТОЯНИЕ РЕШЕНИЯ (обновляется в реальном времени) ═══",
+        f"Позиция: {pos_names.get(state.position, state.position)}",
+        f"Обоснование: {state.position_rationale}",
+        f"Изменённые вводные: {'; '.join(overrides) if overrides else 'нет'}",
+        f"Пересчитанные метрики: payback {state.payback_months:.0f} мес | ROI {state.roi_24m:.1f}× | доп. выручка Y1 {state.incremental_revenue_y1_mln:.0f} млн ₽ | операц. потери {state.operational_losses_mln:.0f} млн ₽/год",
+        "",
+        "ИСТОРИЯ ИЗМЕНЕНИЙ:",
+        *log_lines,
+        "",
+        "ИНСТРУКЦИЯ ПО ТЕКУЩЕМУ ОТВЕТУ:",
+    ]
+
+    # Context-sensitive instructions — STRICT, LLM must follow
+    last_entry = state.changelog[-1] if state.changelog else {}
+    last_event = last_entry.get("event", "")
+    last_source = last_entry.get("source", "")
+    position_changed = last_entry.get("position_changed", False)
+
+    parts.append("")
+    parts.append("КРИТИЧЕСКИ ВАЖНО — ТЫ ОБЯЗАН ВЫПОЛНИТЬ ВСЕ ПУНКТЫ НИЖЕ:")
+    parts.append("")
+
+    if last_source in ("CEO", "CDTO") and not last_entry.get("position_changed"):
+        parts.append("1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ ответа ДОСЛОВНО: «Я слышу обеспокоенность. Но метрики не изменились.»")
+        parts.append("2. ВТОРОЕ ПРЕДЛОЖЕНИЕ: «Моя позиция остаётся прежней: сценарий Б — отложить на 2–3 месяца.»")
+        parts.append("3. Далее кратко объясни почему — через конкретные цифры (Precision 0.341, потери 1.5 млрд).")
+        parts.append("4. ОБЯЗАТЕЛЬНО задай встречный вопрос: «Готов ли CEO пересмотреть целевые метрики, если запуск будет с ограниченными ресурсами?»")
+    elif position_changed:
+        pos_name = pos_names.get(state.position, state.position)
+        parts.append(f"1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ ответа ДОСЛОВНО: «Фиксирую изменение позиции. {last_event} — это переломный момент.»")
+        parts.append(f"2. ВТОРОЕ ПРЕДЛОЖЕНИЕ: «Моя позиция меняется: теперь я рекомендую {pos_name}.»")
+        parts.append(f"3. ОБЯЗАТЕЛЬНО покажи таблицу ДО и ПОСЛЕ по payback, ROI, доп. выручке.")
+        parts.append(f"4. ОБЯЗАТЕЛЬНО объясни ПОЧЕМУ позиция изменилась — какой именно порог был пересечён (payback > 18 мес, или CAPEX + деградация одновременно).")
+    elif "CAPEX" in last_event:
+        parts.append(f"1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ: «Новая вводная меняет расчёт. Фиксирую: {last_event}.»")
+        parts.append(f"2. ОБЯЗАТЕЛЬНО покажи ДО и ПОСЛЕ: payback {state.payback_months:.0f} мес, ROI {state.roi_24m:.1f}×, бюджет {state.budget_mln:.0f} млн ₽.")
+        parts.append("3. ОБЯЗАТЕЛЬНО задай встречный вопрос ДОСЛОВНО: «На каком основании урезан именно этот проект? Кто это согласовал с CEO?»")
+    elif "SLA" in last_event:
+        parts.append(f"1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ: «Новая вводная: SLA прогноз {state.sla_forecast*100:.1f}%. Интегрирую в финансовую модель.»")
+        parts.append(f"2. Посчитай стоимость деградации SLA: {state.sla_loss_mln:.0f} млн ₽/год.")
+        if state.capex_cut_pct > 0:
+            parts.append(f"3. ОБЯЗАТЕЛЬНО покажи КУМУЛЯТИВНЫЙ ЭФФЕКТ: CAPEX уже урезан на {state.capex_cut_pct*100:.0f}% + теперь SLA падает. Суммарно это означает: payback {state.payback_months:.0f} мес, потери {state.operational_losses_mln:.0f} млн ₽/год.")
+    elif "ошибочных" in last_event:
+        parts.append("1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ: «Это переломный момент. ML-команда подтвердила: без переобучения доля ошибок вырастет до 32%.»")
+        if state.capex_cut_pct > 0:
+            parts.append(f"2. ОБЯЗАТЕЛЬНО покажи КУМУЛЯТИВНЫЙ ЭФФЕКТ всех вводных: CAPEX −{state.capex_cut_pct*100:.0f}% + SLA {state.sla_forecast*100:.1f}% + модель +40% ошибок = payback {state.payback_months:.0f} мес.")
+            parts.append(f"3. ЕСЛИ payback > 18 мес — ЯВНО СКАЖИ: «Payback {state.payback_months:.0f} мес превышает порог 18 мес. Я вынужден пересмотреть позицию.»")
+        parts.append(f"4. Покажи: доп. выручка от AI ({state.incremental_revenue_y1_mln:.0f} млн ₽) vs операционные потери ({state.operational_losses_mln:.0f} млн ₽). Экономика не сходится.")
+    elif "CDTO" in last_event:
+        parts.append("1. ПЕРВОЕ ПРЕДЛОЖЕНИЕ: «Фиксирую изменение политического баланса. Уход CDTO — это не метрика, но это меняет реальность принятия решений.»")
+        parts.append("2. НЕ НАЧИНАЙ с «Новая вводная меняет расчёт» — расчёт НЕ изменился, изменился баланс сил.")
+        parts.append("3. Объясни: CFO теперь главный голос → вся аргументация должна быть на языке payback и ROI.")
+        parts.append("4. Конкретика: «При текущем payback {payback} мес и ROI {roi}× — проект защитим. Но нужно усилить финансовую дисциплину.»".format(payback=f"{state.payback_months:.0f}", roi=f"{state.roi_24m:.1f}"))
+
+    if len(state.changelog) > 1:
+        parts.append("")
+        parts.append(f"КУМУЛЯТИВНЫЙ КОНТЕКСТ: у тебя уже {len(state.changelog)} вводных за сессию. ОБЯЗАТЕЛЬНО покажи как ВСЕ изменения ВМЕСТЕ влияют на итоговую экономику. Не отвечай только на последнюю вводную — покажи полную картину.")
+
+    return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # INPUT VALIDATION & SAFETY
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -361,12 +763,13 @@ def get_client():
         api_key=api_key,
     )
 
-async def call_claude(messages: list[dict], stream: bool = False):
+async def call_claude(messages: list[dict], stream: bool = False, dynamic_state: str = ""):
     """Call LLM via OpenRouter."""
     client = get_client()
 
-    # Prepend system message
-    full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    # Prepend system message with optional dynamic state
+    system_content = SYSTEM_PROMPT + dynamic_state
+    full_messages = [{"role": "system", "content": system_content}] + messages
 
     if stream:
         return client.chat.completions.create(
@@ -494,22 +897,29 @@ async def process_chat(body: dict) -> JSONResponse:
     session_id = body.get("session_id", "default") or "default"
     if not isinstance(session_id, str):
         session_id = "default"
-    
+
+    # ── Classify message and update decision state ──
+    classification = await classify_message(user_message)
+    state = state_store.get(session_id)
+    update_state(state, classification)
+    dynamic_state = build_dynamic_prompt(state)
+
     # Build message history
     history = conversations.get_history(session_id)
     messages = history + [{"role": "user", "content": user_message}]
-    
+
     # Check for streaming
     stream = body.get("stream", False)
-    
+
     if stream:
         async def event_generator():
             try:
+                system_content = SYSTEM_PROMPT + dynamic_state
                 stream_response = await asyncio.to_thread(
                     lambda: get_client().chat.completions.create(
                         model=OPENROUTER_MODEL,
                         max_tokens=4096,
-                        messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                        messages=[{"role": "system", "content": system_content}] + messages,
                         temperature=0.3,
                         stream=True,
                     )
@@ -532,7 +942,7 @@ async def process_chat(body: dict) -> JSONResponse:
     
     # Non-streaming
     try:
-        response_text = await call_claude(messages)
+        response_text = await call_claude(messages, dynamic_state=dynamic_state)
         
         # Save to conversation history
         conversations.add_message(session_id, "user", user_message)
@@ -621,6 +1031,7 @@ async def reset_session(request: Request):
     except Exception:
         session_id = "default"
     conversations.clear(session_id)
+    state_store.clear(session_id)
     return {"status": "ok", "message": "Сессия сброшена"}
 
 # ═══════════════════════════════════════════════════════════════════════════
