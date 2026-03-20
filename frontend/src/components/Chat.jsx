@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 export default function Chat({ messages, onSend, isLoading }) {
   const [input, setInput] = useState('')
@@ -50,7 +52,9 @@ export default function Chat({ messages, onSend, isLoading }) {
             <div className="message-avatar">
               {msg.role === 'user' ? 'Вы' : 'AI'}
             </div>
-            <div className="message-bubble">{msg.content}</div>
+            <div className="message-bubble">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            </div>
           </div>
         ))}
         {isLoading && (

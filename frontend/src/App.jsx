@@ -287,7 +287,7 @@ export default function App() {
       )}
 
       <div className="main">
-        <MetricsSidebar metrics={metrics} />
+        <MetricsSidebar metrics={metrics} messages={messages} />
         <Chat messages={messages} onSend={sendMessage} isLoading={isLoading} />
       </div>
     </div>
