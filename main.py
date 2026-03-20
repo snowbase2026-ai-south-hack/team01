@@ -303,29 +303,116 @@ ML-команда (Дима Волков, Аня Морозова):
 """
 
 # ═══════════════════════════════════════════════════════════════════════════
-# CONVERSATION MEMORY
+# DATABASE — PostgreSQL for persistent sessions
+# ═══════════════════════════════════════════════════════════════════════════
+
+import psycopg2
+import psycopg2.extras
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+def _get_db():
+    """Get a database connection."""
+    return psycopg2.connect(DATABASE_URL)
+
+
+def _init_db():
+    """Create tables if they don't exist."""
+    if not DATABASE_URL:
+        return
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS decision_states (
+                session_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"DB init warning: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONVERSATION MEMORY — PostgreSQL backed with in-memory fallback
 # ═══════════════════════════════════════════════════════════════════════════
 
 class ConversationStore:
-    """Simple in-memory conversation store with session management."""
-    
+    """Conversation store with PostgreSQL persistence."""
+
     def __init__(self, max_history: int = 40):
-        self.sessions: dict[str, list[dict]] = {}
         self.max_history = max_history
-    
+        self._cache: dict[str, list[dict]] = {}
+
     def get_history(self, session_id: str) -> list[dict]:
-        return self.sessions.get(session_id, [])
-    
+        if session_id in self._cache:
+            return self._cache[session_id]
+        if DATABASE_URL:
+            try:
+                conn = _get_db()
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT role, content FROM messages WHERE session_id = %s ORDER BY id DESC LIMIT %s",
+                    (session_id, self.max_history)
+                )
+                rows = cur.fetchall()
+                cur.close()
+                conn.close()
+                history = [{"role": r, "content": c} for r, c in reversed(rows)]
+                self._cache[session_id] = history
+                return history
+            except Exception:
+                pass
+        return []
+
     def add_message(self, session_id: str, role: str, content: str):
-        if session_id not in self.sessions:
-            self.sessions[session_id] = []
-        self.sessions[session_id].append({"role": role, "content": content})
-        # Trim old messages but keep system context
-        if len(self.sessions[session_id]) > self.max_history:
-            self.sessions[session_id] = self.sessions[session_id][-self.max_history:]
-    
+        if session_id not in self._cache:
+            self._cache[session_id] = self.get_history(session_id)
+        self._cache[session_id].append({"role": role, "content": content})
+        if len(self._cache[session_id]) > self.max_history:
+            self._cache[session_id] = self._cache[session_id][-self.max_history:]
+        if DATABASE_URL:
+            try:
+                conn = _get_db()
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO messages (session_id, role, content) VALUES (%s, %s, %s)",
+                    (session_id, role, content)
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
+
     def clear(self, session_id: str):
-        self.sessions.pop(session_id, None)
+        self._cache.pop(session_id, None)
+        if DATABASE_URL:
+            try:
+                conn = _get_db()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM messages WHERE session_id = %s", (session_id,))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
+
 
 conversations = ConversationStore()
 
@@ -393,17 +480,88 @@ class DecisionState:
 
 
 class StateStore:
-    """Per-session decision state storage."""
+    """Per-session decision state storage with PostgreSQL persistence."""
     def __init__(self):
-        self._states: dict[str, DecisionState] = {}
+        self._cache: dict[str, DecisionState] = {}
+
+    def _serialize(self, state: DecisionState) -> str:
+        return json.dumps({
+            "position": state.position,
+            "position_rationale": state.position_rationale,
+            "capex_cut_pct": state.capex_cut_pct,
+            "sla_forecast": state.sla_forecast,
+            "model_error_increase": state.model_error_increase,
+            "cdto_left": state.cdto_left,
+            "ceo_pressure_count": state.ceo_pressure_count,
+            "budget_mln": state.budget_mln,
+            "payback_months": state.payback_months,
+            "roi_24m": state.roi_24m,
+            "incremental_revenue_y1_mln": state.incremental_revenue_y1_mln,
+            "operational_losses_mln": state.operational_losses_mln,
+            "sla_loss_mln": state.sla_loss_mln,
+            "changelog": state.changelog,
+            "turn": state.turn,
+        }, ensure_ascii=False)
+
+    def _deserialize(self, data: str) -> DecisionState:
+        d = json.loads(data)
+        s = DecisionState()
+        for k, v in d.items():
+            if hasattr(s, k):
+                setattr(s, k, v)
+        return s
 
     def get(self, session_id: str) -> DecisionState:
-        if session_id not in self._states:
-            self._states[session_id] = DecisionState()
-        return self._states[session_id]
+        if session_id in self._cache:
+            return self._cache[session_id]
+        if DATABASE_URL:
+            try:
+                conn = _get_db()
+                cur = conn.cursor()
+                cur.execute("SELECT state_json FROM decision_states WHERE session_id = %s", (session_id,))
+                row = cur.fetchone()
+                cur.close()
+                conn.close()
+                if row:
+                    state = self._deserialize(row[0])
+                    self._cache[session_id] = state
+                    return state
+            except Exception:
+                pass
+        state = DecisionState()
+        self._cache[session_id] = state
+        return state
+
+    def save(self, session_id: str):
+        """Persist current state to database."""
+        if session_id not in self._cache or not DATABASE_URL:
+            return
+        try:
+            conn = _get_db()
+            cur = conn.cursor()
+            data = self._serialize(self._cache[session_id])
+            cur.execute("""
+                INSERT INTO decision_states (session_id, state_json, updated_at) VALUES (%s, %s, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = NOW()
+            """, (session_id, data))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
 
     def clear(self, session_id: str):
-        self._states.pop(session_id, None)
+        self._cache.pop(session_id, None)
+        if DATABASE_URL:
+            try:
+                conn = _get_db()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM decision_states WHERE session_id = %s", (session_id,))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
 
 
 state_store = StateStore()
@@ -1168,6 +1326,9 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Initialize database on startup
+_init_db()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1385,6 +1546,7 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
     state = state_store.get(session_id)
     update_state(state, classification)
     state.turn += 1
+    state_store.save(session_id)
     dynamic_state = build_dynamic_prompt(state)
     current_metrics = state.compute_metrics()
 
@@ -1539,6 +1701,65 @@ async def reset_session(request: Request):
     conversations.clear(session_id)
     state_store.clear(session_id)
     return {"status": "ok", "message": "Сессия сброшена"}
+
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all sessions with their last activity."""
+    if not DATABASE_URL:
+        return {"sessions": []}
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT m.session_id, COUNT(*) as msg_count, MAX(m.created_at) as last_active,
+                   ds.state_json
+            FROM messages m
+            LEFT JOIN decision_states ds ON m.session_id = ds.session_id
+            GROUP BY m.session_id, ds.state_json
+            ORDER BY MAX(m.created_at) DESC
+            LIMIT 50
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        sessions = []
+        for session_id, msg_count, last_active, state_json in rows:
+            entry = {
+                "session_id": session_id,
+                "message_count": msg_count,
+                "last_active": last_active.isoformat() if last_active else None,
+            }
+            if state_json:
+                try:
+                    s = json.loads(state_json)
+                    entry["position"] = s.get("position", "unknown")
+                    entry["turn"] = s.get("turn", 0)
+                except Exception:
+                    pass
+            sessions.append(entry)
+        return {"sessions": sessions}
+    except Exception as e:
+        return {"sessions": [], "error": str(e)}
+
+
+@app.get("/api/sessions/{session_id}/history")
+async def get_session_history(session_id: str):
+    """Get full message history for a session."""
+    history = conversations.get_history(session_id)
+    state = state_store.get(session_id)
+    return {
+        "session_id": session_id,
+        "messages": history,
+        "state": {
+            "position": state.position,
+            "payback_months": state.payback_months,
+            "roi_24m": state.roi_24m,
+            "turn": state.turn,
+        },
+        "metrics": state.compute_metrics(),
+    }
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STATIC FILES & SPA FALLBACK
