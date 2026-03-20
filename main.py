@@ -1283,14 +1283,38 @@ AVAILABLE_MODELS = {
     "openrouter": {
         "name": "OpenRouter",
         "models": [
+            # Anthropic
+            {"id": "anthropic/claude-opus-4.6", "name": "Claude Opus 4.6", "type": "llm"},
+            {"id": "anthropic/claude-sonnet-4.6", "name": "Claude Sonnet 4.6", "type": "llm"},
             {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "type": "llm"},
-            {"id": "anthropic/claude-3.5-haiku", "name": "Claude 3.5 Haiku", "type": "llm"},
-            {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "type": "llm"},
             {"id": "anthropic/claude-opus-4", "name": "Claude Opus 4", "type": "llm"},
-            {"id": "google/gemini-2.5-flash-preview", "name": "Gemini 2.5 Flash", "type": "llm"},
-            {"id": "google/gemini-2.5-pro-preview", "name": "Gemini 2.5 Pro", "type": "llm"},
-            {"id": "openai/gpt-4o", "name": "GPT-4o", "type": "llm"},
-            {"id": "openai/gpt-4.1", "name": "GPT-4.1", "type": "llm"},
+            {"id": "anthropic/claude-3.5-haiku", "name": "Claude 3.5 Haiku", "type": "llm"},
+            # OpenAI
+            {"id": "openai/gpt-5.4-pro", "name": "GPT-5.4 Pro", "type": "llm"},
+            {"id": "openai/gpt-5.4", "name": "GPT-5.4", "type": "llm"},
+            {"id": "openai/gpt-5.4-mini", "name": "GPT-5.4 Mini", "type": "llm"},
+            {"id": "openai/gpt-5.4-nano", "name": "GPT-5.4 Nano", "type": "llm"},
+            {"id": "openai/gpt-5.3-chat", "name": "GPT-5.3 Chat", "type": "llm"},
+            {"id": "openai/gpt-5.3-codex", "name": "GPT-5.3 Codex", "type": "llm"},
+            # Google
+            {"id": "google/gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro", "type": "llm"},
+            {"id": "google/gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "type": "llm"},
+            # xAI
+            {"id": "x-ai/grok-4.20-beta", "name": "Grok 4.20 Beta", "type": "llm"},
+            {"id": "x-ai/grok-4.20-multi-agent-beta", "name": "Grok 4.20 Multi-Agent", "type": "llm"},
+            # Qwen
+            {"id": "qwen/qwen3.5-397b-a17b", "name": "Qwen 3.5 397B", "type": "llm"},
+            {"id": "qwen/qwen3.5-122b-a10b", "name": "Qwen 3.5 122B", "type": "llm"},
+            {"id": "qwen/qwen3-max-thinking", "name": "Qwen3 Max Thinking", "type": "llm"},
+            {"id": "qwen/qwen3-coder-next", "name": "Qwen3 Coder Next", "type": "llm"},
+            # Other popular
+            {"id": "minimax/minimax-m2.7", "name": "MiniMax M2.7", "type": "llm"},
+            {"id": "nvidia/nemotron-3-super-120b-a12b", "name": "Nemotron 3 Super 120B", "type": "llm"},
+            {"id": "inception/mercury-2", "name": "Mercury 2", "type": "llm"},
+            {"id": "mistralai/mistral-small-2603", "name": "Mistral Small 4", "type": "llm"},
+            {"id": "z-ai/glm-5-turbo", "name": "GLM-5 Turbo", "type": "llm"},
+            {"id": "z-ai/glm-5", "name": "GLM-5", "type": "llm"},
+            {"id": "bytedance-seed/seed-2.0-lite", "name": "Seed 2.0 Lite", "type": "llm"},
             {"id": "deepseek/deepseek-r1", "name": "DeepSeek R1", "type": "llm"},
         ],
     },
