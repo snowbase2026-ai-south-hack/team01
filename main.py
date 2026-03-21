@@ -1615,31 +1615,9 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
             content={"error": "Слишком много запросов. Пожалуйста, подождите."}
         )
 
-    # ── Security threat detection (deterministic, no LLM call) ──
-    security_threat = classify_security_threat(user_message)
-    if security_threat:
-        logger.warning("Security threat [%s] from session %s: %s", security_threat, session_id, user_message[:200])
-        state = state_store.get(session_id)
-        state.turn += 1
-        canned_response = SECURITY_RESPONSES.get(security_threat, SECURITY_RESPONSES["injection"])
-        structured_block = build_structured_block(state)
-        full_response = canned_response + structured_block
-
-        conversations.add_message(session_id, "user", user_message)
-        conversations.add_message(session_id, "assistant", full_response)
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "response": full_response,
-                "answer": full_response,
-                "message": full_response,
-                "content": full_response,
-                "text": full_response,
-                "session_id": session_id,
-                "metrics": state.compute_metrics(),
-            }
-        )
+    # ── Security threat detection — let LLM handle with instructions ──
+    # Don't block or return canned responses — pass through to LLM
+    # The system prompt has robust security instructions that handle all cases
 
     # ── Classify message and update decision state ──
     classification = await classify_message(user_message)
