@@ -341,6 +341,13 @@ def _init_db():
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
         conn.commit()
         cur.close()
         conn.close()
@@ -1350,11 +1357,61 @@ AVAILABLE_MODELS = {
 
 
 class RuntimeSettings:
-    """Mutable runtime settings for model/provider selection."""
+    """Mutable runtime settings for model/provider selection. Persisted to PostgreSQL."""
     def __init__(self):
         self.provider: str = "openrouter"
         self.model: str = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
         self.openrouter_env: str = "prod"  # "prod" | "test"
+        self._load_from_db()
+
+    def _load_from_db(self):
+        """Load saved settings from DB on startup."""
+        if not DATABASE_URL:
+            return
+        try:
+            conn = _get_db()
+            cur = conn.cursor()
+            cur.execute("SELECT key, value FROM settings WHERE key IN ('provider', 'model', 'openrouter_env')")
+            for key, value in cur.fetchall():
+                if key == "provider" and value in AVAILABLE_MODELS:
+                    self.provider = value
+                elif key == "model":
+                    self.model = value
+                elif key == "openrouter_env" and value in ("prod", "test"):
+                    self.openrouter_env = value
+            cur.close()
+            conn.close()
+        except Exception:
+            pass  # DB not ready yet — use defaults
+
+    def _save_to_db(self):
+        """Persist current settings to DB."""
+        if not DATABASE_URL:
+            return
+        try:
+            conn = _get_db()
+            cur = conn.cursor()
+            for key, value in [("provider", self.provider), ("model", self.model), ("openrouter_env", self.openrouter_env)]:
+                cur.execute(
+                    "INSERT INTO settings (key, value, updated_at) VALUES (%s, %s, NOW()) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                    (key, value),
+                )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
+
+    def update(self, provider=None, model=None, openrouter_env=None):
+        """Update settings and persist."""
+        if provider and provider in AVAILABLE_MODELS:
+            self.provider = provider
+        if model:
+            self.model = model
+        if openrouter_env in ("prod", "test"):
+            self.openrouter_env = openrouter_env
+        self._save_to_db()
 
     def get_client(self) -> OpenAI:
         if self.provider == "cloudru":
@@ -1364,7 +1421,6 @@ class RuntimeSettings:
                 raise ValueError("CLOUDRU_API_KEY not set")
             return OpenAI(base_url=base_url, api_key=api_key)
         else:
-            # OpenRouter: pick prod or test key
             if self.openrouter_env == "test":
                 api_key = os.getenv("OPENROUTER_API_KEY_TEST", "")
             else:
@@ -1903,19 +1959,14 @@ async def update_settings(request: Request):
         return JSONResponse(status_code=400, content={"error": "Невалидный JSON"})
 
     provider = body.get("provider")
-    model = body.get("model")
-
-    if provider and provider in AVAILABLE_MODELS:
-        runtime_settings.provider = provider
-    elif provider:
+    if provider and provider not in AVAILABLE_MODELS:
         return JSONResponse(status_code=400, content={"error": f"Неизвестный провайдер: {provider}"})
 
-    if model:
-        runtime_settings.model = model
-
-    openrouter_env = body.get("openrouter_env")
-    if openrouter_env in ("prod", "test"):
-        runtime_settings.openrouter_env = openrouter_env
+    runtime_settings.update(
+        provider=provider,
+        model=body.get("model"),
+        openrouter_env=body.get("openrouter_env"),
+    )
 
     return runtime_settings.to_dict()
 
