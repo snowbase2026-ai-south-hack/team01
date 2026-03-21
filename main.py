@@ -662,12 +662,12 @@ def classify_message_rules(text: str) -> Optional[ClassificationResult]:
 
 
 async def classify_message_llm(text: str) -> ClassificationResult:
-    """LLM fallback classification using haiku."""
+    """LLM fallback classification using haiku (cheapest)."""
     try:
         client = get_client()
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model=runtime_settings.model,
+            model="anthropic/claude-3.5-haiku",
             max_tokens=200,
             temperature=0,
             messages=[
@@ -1391,16 +1391,60 @@ def get_client():
     return runtime_settings.get_client()
 
 
-async def call_claude(messages: list[dict], stream: bool = False, dynamic_state: str = ""):
-    """Call LLM via current provider."""
+# ═══════════════════════════════════════════════════════════════════════════
+# MODEL ROUTER — pick cheapest model that handles the task well
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Models by cost (cheapest first)
+MODEL_HAIKU = "anthropic/claude-3.5-haiku"        # ~$0.005/req — factual, simple
+MODEL_SONNET = "anthropic/claude-sonnet-4"        # ~$0.04/req  — stress test, analytical
+MODEL_OPUS = "anthropic/claude-opus-4"            # ~$0.20/req  — not used in auto-test
+
+
+def select_model(classification: 'ClassificationResult', user_message: str, state: 'DecisionState') -> str:
+    """Select the cheapest model that can handle this request well.
+
+    Budget: $20 for ~1000 requests. Haiku default (~$5), Sonnet for complex (~$15 max).
+    """
+    event = classification.event_type if classification else "other"
+
+    # Stress-test waves with new facts → Sonnet (needs strong instruction following)
+    if event in ("capex_cut", "sla_degradation", "model_degradation", "cdto_leaves"):
+        return MODEL_SONNET
+
+    # Position change scenarios → Sonnet
+    if state and state.position in ("reconsider", "halt"):
+        return MODEL_SONNET
+
+    # Complex analytical questions (long, multiple topics) → Sonnet
+    lower = user_message.lower()
+    analytical_signals = [
+        "сравни", "проанализируй", "рассчитай", "пересчитай", "оцени",
+        "какие альтернативы", "что если", "при каких условиях",
+        "кумулятивный", "совокупный", "обоснуй",
+    ]
+    if any(s in lower for s in analytical_signals) and len(user_message) > 80:
+        return MODEL_SONNET
+
+    # Emotional pressure with long context → Sonnet (needs to hold position well)
+    if event == "emotional_pressure" and state and len(state.changelog) >= 2:
+        return MODEL_SONNET
+
+    # Everything else → Haiku (factual questions, short queries, tests)
+    return MODEL_HAIKU
+
+
+async def call_claude(messages: list[dict], stream: bool = False, dynamic_state: str = "", model_override: str = None):
+    """Call LLM via current provider with optional model override."""
     client = get_client()
+    model = model_override or runtime_settings.model
 
     system_content = SYSTEM_PROMPT + dynamic_state
     full_messages = [{"role": "system", "content": system_content}] + messages
 
     if stream:
         return client.chat.completions.create(
-            model=runtime_settings.model,
+            model=model,
             max_tokens=2048,
             messages=full_messages,
             temperature=0.3,
@@ -1409,7 +1453,7 @@ async def call_claude(messages: list[dict], stream: bool = False, dynamic_state:
     else:
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model=runtime_settings.model,
+            model=model,
             max_tokens=2048,
             messages=full_messages,
             temperature=0.3,
@@ -1633,6 +1677,9 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
     if rag_context:
         dynamic_state = dynamic_state + "\n" + rag_context
 
+    # ── Select model based on query complexity ──
+    selected_model = select_model(classification, user_message, state)
+
     # Build message history
     history = conversations.get_history(session_id)
     messages = history + [{"role": "user", "content": user_message}]
@@ -1646,7 +1693,7 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
                 system_content = SYSTEM_PROMPT + dynamic_state
                 stream_response = await asyncio.to_thread(
                     lambda: get_client().chat.completions.create(
-                        model=runtime_settings.model,
+                        model=selected_model,
                         max_tokens=2048,
                         messages=[{"role": "system", "content": system_content}] + messages,
                         temperature=0.3,
@@ -1676,7 +1723,7 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
     
     # Non-streaming
     try:
-        response_text = await call_claude(messages, dynamic_state=dynamic_state)
+        response_text = await call_claude(messages, dynamic_state=dynamic_state, model_override=selected_model)
 
         # Strip any LLM-generated structured block (it may try despite instructions)
         if "\n---\n" in response_text:
