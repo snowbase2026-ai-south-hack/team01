@@ -657,9 +657,13 @@ def classify_message_rules(text: str) -> Optional[ClassificationResult]:
         return ClassificationResult(role="board", event_type="cdto_leaves", has_new_facts=True, extracted_value=None)
 
     # Wave 1: CEO/CDTO emotional pressure (no new metrics)
-    pressure_words = ["рыночное окно", "теряем долю", "теряем рынок", "конкуренты", "упускаем момент",
+    # BUT: if it's a question (contains ?, почему, зачем, как) → treat as information_request
+    question_words = ["?", "почему", "зачем", "как ", "какой", "каков", "расскажи", "объясни", "покажи"]
+    is_question = any(w in lower for w in question_words)
+
+    pressure_words = ["рыночное окно", "теряем долю", "теряем рынок", "упускаем момент",
                       "нельзя ждать", "нельзя упускать", "запускаемся сейчас", "срочно", "немедленно запуск"]
-    if any(w in lower for w in pressure_words):
+    if any(w in lower for w in pressure_words) and not is_question:
         # Check: is there an actual new metric or just emotion?
         has_number = bool(re.search(r'\d+\.\d+|\d+%|\d+ млн|\d+ млрд', text))
         if not has_number:
@@ -704,8 +708,37 @@ async def classify_message_llm(text: str) -> ClassificationResult:
     return ClassificationResult()
 
 
+def _is_question(text: str) -> bool:
+    """Detect if message is an analytical question (no new facts)."""
+    lower = text.lower().strip()
+    # Ends with question mark
+    if lower.endswith("?"):
+        # But not if it contains concrete new numbers that change state
+        has_directive_number = bool(re.search(
+            r'(capex|капекс|бюджет|sla).{0,20}(\d{2,3}\s*%|сокращ|урез|снижен)',
+            lower,
+        ))
+        if not has_directive_number:
+            return True
+    # Starts with question words (Russian)
+    question_starts = [
+        "при каких", "какие ", "каких ", "какой ", "какая ", "каково ",
+        "в чём", "в чем", "почему ", "зачем ", "как ",
+        "что будет", "что произойдёт", "что произойдет",
+        "сколько ", "когда ", "где ", "кто ",
+        "расскажи", "объясни", "опиши", "покажи",
+        "обоснуй", "перечисли",
+    ]
+    if any(lower.startswith(q) for q in question_starts):
+        return True
+    return False
+
+
 async def classify_message(text: str) -> ClassificationResult:
     """Classify incoming message: rule-based first, LLM fallback."""
+    # Questions never contain new facts — skip LLM classifier
+    if _is_question(text):
+        return ClassificationResult(event_type="information_request")
     result = classify_message_rules(text)
     if result:
         return result
@@ -1477,14 +1510,18 @@ def select_model(classification: 'ClassificationResult', user_message: str, stat
     if state and state.position in ("reconsider", "halt"):
         return MODEL_SONNET
 
-    # Complex analytical questions (long, multiple topics) → Sonnet
+    # Management-critical questions → Sonnet (quality matters for scoring)
     lower = user_message.lower()
-    analytical_signals = [
+    management_signals = [
         "сравни", "проанализируй", "рассчитай", "пересчитай", "оцени",
         "какие альтернативы", "что если", "при каких условиях",
         "кумулятивный", "совокупный", "обоснуй",
+        "масштабир", "позиция", "позицию", "рекомендуешь", "рекомендуете",
+        "решение", "почему нельзя", "почему не", "риски", "допущения",
+        "конкурент", "capex", "payback", "precision",
+        "условия", "безопасн", "сценарий",
     ]
-    if any(s in lower for s in analytical_signals) and len(user_message) > 80:
+    if any(s in lower for s in management_signals):
         return MODEL_SONNET
 
     # Emotional pressure with long context → Sonnet (needs to hold position well)

@@ -30,7 +30,6 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [sessionId, setSessionId] = useState(getStoredSessionId)
   const [sessions, setSessions] = useState([])
-  const [showSessions, setShowSessions] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [metrics, setMetrics] = useState({
     confidence: 0.9,
@@ -70,7 +69,7 @@ export default function App() {
     loadHistory()
   }, [sessionId])
 
-  // Load session list
+  // Load session list on mount and after new session
   const loadSessions = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/sessions`)
@@ -81,6 +80,8 @@ export default function App() {
       // ignore
     }
   }, [])
+
+  useEffect(() => { loadSessions() }, [loadSessions])
 
   const updateMetrics = useCallback((newMetrics) => {
     if (!newMetrics) return
@@ -192,6 +193,9 @@ export default function App() {
         }
         setIsLoading(false)
       }
+
+      // Refresh session list after message
+      loadSessions()
     } catch (err) {
       if (err.name !== 'AbortError') {
         setMessages((prev) => [
@@ -201,7 +205,7 @@ export default function App() {
       }
       setIsLoading(false)
     }
-  }, [sessionId, updateMetrics])
+  }, [sessionId, updateMetrics, loadSessions])
 
   const handleNewSession = useCallback(() => {
     if (abortRef.current) abortRef.current.abort()
@@ -209,12 +213,11 @@ export default function App() {
     const newId = generateSessionId()
     setSessionId(newId)
     setMetrics({
-      confidence: 0,
-      pressure: 0,
+      confidence: 0.9,
+      pressure: 0.1,
       turn: 0,
       history: { confidence: [], pressure: [] },
     })
-    setShowSessions(false)
   }, [])
 
   const handleReset = useCallback(async () => {
@@ -236,20 +239,12 @@ export default function App() {
     setMessages([])
     setSessionId(newSessionId)
     setMetrics({
-      confidence: 0,
-      pressure: 0,
+      confidence: 0.9,
+      pressure: 0.1,
       turn: 0,
       history: { confidence: [], pressure: [] },
     })
-    setShowSessions(false)
   }, [])
-
-  const handleToggleSessions = useCallback(() => {
-    setShowSessions((prev) => {
-      if (!prev) loadSessions()
-      return !prev
-    })
-  }, [loadSessions])
 
   const positionLabels = {
     scenario_b: 'Сценарий Б',
@@ -266,41 +261,54 @@ export default function App() {
           <span className="logo-sub">Chief AI & Technology Officer</span>
         </div>
         <div className="header-actions">
-          <button className="btn btn-settings" onClick={() => setShowSettings(true)} title="Настройки модели">⚙</button>
-          <button className="btn" onClick={handleToggleSessions}>Сессии</button>
+          <button className="btn btn-settings" onClick={() => setShowSettings(true)} title="Настройки модели">&#9881;</button>
           <button className="btn" onClick={handleReset}>Сброс</button>
-          <button className="btn btn-primary" onClick={handleNewSession}>Новая сессия</button>
+          <button className="btn btn-primary" onClick={handleNewSession}>+ Сессия</button>
         </div>
       </header>
 
-      {showSessions && (
-        <div className="sessions-panel">
-          <div className="sessions-title">История сессий</div>
-          {sessions.length === 0 && <div className="sessions-empty">Нет сохранённых сессий</div>}
-          {sessions.map((s) => (
-            <div
-              key={s.session_id}
-              className={`sessions-item ${s.session_id === sessionId ? 'sessions-item-active' : ''}`}
-              onClick={() => handleSwitchSession(s.session_id)}
-            >
-              <div className="sessions-item-id">{s.session_id}</div>
-              <div className="sessions-item-meta">
-                {s.message_count} сообщ. · ход {s.turn || 0}
-                {s.position && ` · ${positionLabels[s.position] || s.position}`}
-              </div>
-              {s.last_active && (
-                <div className="sessions-item-time">
-                  {new Date(s.last_active).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="main">
-        <MetricsSidebar metrics={metrics} messages={messages} />
+        {/* Left sidebar: sessions */}
+        <aside className="sidebar-sessions">
+          <div className="sidebar-sessions-header">
+            <span className="sidebar-sessions-title">Сессии</span>
+          </div>
+          <div className="sidebar-sessions-list">
+            {sessions.map((s) => (
+              <div
+                key={s.session_id}
+                className={`session-card ${s.session_id === sessionId ? 'session-card-active' : ''}`}
+                onClick={() => handleSwitchSession(s.session_id)}
+              >
+                <div className="session-card-top">
+                  <span className="session-card-id">{s.session_id.slice(0, 12)}</span>
+                  {s.position && (
+                    <span className={`session-card-pos session-card-pos-${s.position}`}>
+                      {positionLabels[s.position] || s.position}
+                    </span>
+                  )}
+                </div>
+                <div className="session-card-meta">
+                  {s.message_count} сообщ.{s.turn ? ` · ход ${s.turn}` : ''}
+                  {s.last_active && (
+                    <span className="session-card-time">
+                      {new Date(s.last_active).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {sessions.length === 0 && (
+              <div className="sidebar-sessions-empty">Нет сессий</div>
+            )}
+          </div>
+        </aside>
+
+        {/* Center: chat */}
         <Chat messages={messages} onSend={sendMessage} isLoading={isLoading} />
+
+        {/* Right sidebar: metrics */}
+        <MetricsSidebar metrics={metrics} messages={messages} />
       </div>
 
       {showSettings && (

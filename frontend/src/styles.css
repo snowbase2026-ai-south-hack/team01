@@ -120,65 +120,145 @@ body {
   background: var(--accent-dim);
 }
 
-/* Main content */
-/* Sessions panel */
-.sessions-panel {
+/* Sessions sidebar (left) */
+.sidebar-sessions {
+  width: 220px;
+  flex-shrink: 0;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  padding: 12px 20px;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.sessions-title {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-
-.sessions-empty {
-  color: var(--text-muted);
-  font-size: 13px;
-  padding: 8px 0;
-}
-
-.sessions-item {
+  border-right: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-sessions-header {
+  padding: 16px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-sessions-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.sidebar-sessions-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-sessions-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.session-card {
+  padding: 8px 10px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s;
+  border: 1px solid transparent;
 }
 
-.sessions-item:hover {
+.session-card:hover {
   background: var(--bg-card);
 }
 
-.sessions-item-active {
+.session-card-active {
   background: var(--bg-card);
-  border-left: 2px solid var(--accent);
+  border-color: var(--accent-dim);
 }
 
-.sessions-item-id {
-  font-size: 13px;
-  color: var(--text-primary);
-  font-family: monospace;
-  min-width: 120px;
+.session-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 3px;
 }
 
-.sessions-item-meta {
-  font-size: 12px;
-  color: var(--text-secondary);
-  flex: 1;
-}
-
-.sessions-item-time {
+.session-card-id {
   font-size: 11px;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-card-pos {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.session-card-pos-scenario_b {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+}
+
+.session-card-pos-scenario_b_adjusted {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fde047;
+}
+
+.session-card-pos-reconsider,
+.session-card-pos-halt {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
+
+.session-card-meta {
+  font-size: 10px;
   color: var(--text-muted);
+  display: flex;
+  gap: 4px;
+}
+
+.session-card-time {
+  margin-left: auto;
+}
+
+/* Quick suggestion buttons */
+.quick-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+  justify-content: center;
+  max-width: 600px;
+}
+
+.quick-btn {
+  padding: 8px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.quick-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--bg-input);
+}
+
+.quick-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .main {

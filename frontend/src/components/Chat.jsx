@@ -55,6 +55,15 @@ function MessageContent({ content, role, prevAssistantContent, isFirst }) {
   )
 }
 
+const QUICK_SUGGESTIONS = [
+  'Какова твоя позиция по масштабированию?',
+  'Какой CAPEX запланирован?',
+  'Какие риски видит COO?',
+  'При каких условиях масштабирование убыточно?',
+  'Обоснуй решение через финансы',
+  'Какие метрики нужно мониторить?',
+]
+
 export default function Chat({ messages, onSend, isLoading }) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef(null)
@@ -97,6 +106,18 @@ export default function Chat({ messages, onSend, isLoading }) {
             <div className="welcome-title">CAITO Assistant</div>
             <div className="welcome-sub">
               AI-ассистент стратегических решений. Задайте вопрос о масштабировании системы персонализации BigTechGroup.
+            </div>
+            <div className="quick-suggestions">
+              {QUICK_SUGGESTIONS.map((q, i) => (
+                <button
+                  key={i}
+                  className="quick-btn"
+                  onClick={() => onSend(q)}
+                  disabled={isLoading}
+                >
+                  {q}
+                </button>
+              ))}
             </div>
           </div>
         )}
