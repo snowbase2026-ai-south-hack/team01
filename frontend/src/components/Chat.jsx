@@ -3,10 +3,24 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { extractAndRenderCharts } from './InlineCharts'
 
-function extractMetricsKey(content) {
+function extractBlockField(content, field) {
   if (!content) return null
-  const m = content.match(/\*\*КЛЮЧЕВЫЕ МЕТРИКИ:\*\*\s*(.+?)(?:\n|$)/)
+  const re = new RegExp('\\*\\*' + field + ':\\*\\*\\s*(.+?)(?:\\n|$)')
+  const m = content.match(re)
   return m ? m[1].trim() : null
+}
+
+function compactPositionLine(content) {
+  const position = extractBlockField(content, 'ТЕКУЩАЯ ПОЗИЦИЯ')
+  if (!position) return null
+  const isRed = /пересмотр|остановка|halt/i.test(position)
+  const isYellow = /скорректированный|adjusted/i.test(position)
+  const color = isRed ? '#ef4444' : isYellow ? '#eab308' : '#22c55e'
+  return (
+    <div style={{ marginTop: 8, fontSize: 12, color, opacity: 0.8 }}>
+      ■ {position}
+    </div>
+  )
 }
 
 function MessageContent({ content, role, prevAssistantContent, isFirst }) {
@@ -14,30 +28,20 @@ function MessageContent({ content, role, prevAssistantContent, isFirst }) {
     if (role !== 'assistant') return { mainText: content, statusBlock: null }
 
     const result = extractAndRenderCharts(content || '')
+    if (!result.statusBlock) return result
 
-    // Show full charts only if: first message OR metrics changed
-    if (result.statusBlock) {
-      const curMetrics = extractMetricsKey(content)
-      const prevMetrics = extractMetricsKey(prevAssistantContent)
+    // Compare current and previous metrics+position
+    const curMetrics = extractBlockField(content, 'КЛЮЧЕВЫЕ МЕТРИКИ')
+    const curPosition = extractBlockField(content, 'ТЕКУЩАЯ ПОЗИЦИЯ')
+    const prevMetrics = extractBlockField(prevAssistantContent, 'КЛЮЧЕВЫЕ МЕТРИКИ')
+    const prevPosition = extractBlockField(prevAssistantContent, 'ТЕКУЩАЯ ПОЗИЦИЯ')
 
-      if (!isFirst && curMetrics && prevMetrics && curMetrics === prevMetrics) {
-        // Metrics unchanged — compact position line only
-        const posMatch = (content || '').match(/\*\*ТЕКУЩАЯ ПОЗИЦИЯ:\*\*\s*(.+?)(?:\n|$)/)
-        if (posMatch) {
-          const position = posMatch[1].trim()
-          const isRed = /пересмотр|остановка|halt/i.test(position)
-          const isYellow = /скорректированный|adjusted/i.test(position)
-          const color = isRed ? '#ef4444' : isYellow ? '#eab308' : '#22c55e'
-          return {
-            mainText: result.mainText,
-            statusBlock: (
-              <div style={{ marginTop: 8, fontSize: 12, color, opacity: 0.8 }}>
-                ■ {position}
-              </div>
-            ),
-          }
-        }
-      }
+    const metricsChanged = !prevMetrics || curMetrics !== prevMetrics
+    const positionChanged = !prevPosition || curPosition !== prevPosition
+    const showFullBlock = isFirst || metricsChanged || positionChanged
+
+    if (!showFullBlock) {
+      return { mainText: result.mainText, statusBlock: compactPositionLine(content) }
     }
 
     return result
