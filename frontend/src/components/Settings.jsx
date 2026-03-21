@@ -12,7 +12,7 @@ const TYPE_ORDER = ['llm', 'image+text-to-text', 'audio-to-text', 'embedder', 'r
 
 export default function Settings({ onClose }) {
   const [providers, setProviders] = useState({})
-  const [current, setCurrent] = useState({ provider: '', model: '' })
+  const [current, setCurrent] = useState({ provider: '', model: '', openrouter_env: 'prod' })
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
@@ -21,18 +21,21 @@ export default function Settings({ onClose }) {
   const [filterType, setFilterType] = useState('llm')
   const [openrouterEnv, setOpenrouterEnv] = useState('prod')
 
-  useEffect(() => {
+  const loadCurrent = () => {
     fetch('/api/models')
       .then((r) => r.json())
       .then((data) => {
         setProviders(data.providers || {})
-        setCurrent(data.current || {})
-        setSelectedProvider(data.current?.provider || '')
-        setSelectedModel(data.current?.model || '')
-        setOpenrouterEnv(data.current?.openrouter_env || 'prod')
+        const c = data.current || {}
+        setCurrent(c)
+        setSelectedProvider(c.provider || '')
+        setSelectedModel(c.model || '')
+        setOpenrouterEnv(c.openrouter_env || 'prod')
       })
       .catch(() => {})
-  }, [])
+  }
+
+  useEffect(() => { loadCurrent() }, [])
 
   const currentProviderModels = useMemo(() => {
     const p = providers[selectedProvider]
@@ -49,19 +52,25 @@ export default function Settings({ onClose }) {
     return TYPE_ORDER.filter((t) => types.has(t))
   }, [currentProviderModels])
 
-  const handleSave = async () => {
+  // Save settings to backend
+  const applySettings = async (overrides = {}) => {
+    const payload = {
+      provider: overrides.provider ?? selectedProvider,
+      model: overrides.model ?? selectedModel,
+      openrouter_env: overrides.openrouter_env ?? openrouterEnv,
+    }
     setSaving(true)
     setTestResult(null)
     try {
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: selectedProvider, model: selectedModel, openrouter_env: openrouterEnv }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (res.ok) {
         setCurrent(data)
-        setTestResult({ ok: true, message: 'Настройки сохранены' })
+        setTestResult({ ok: true, message: `Сохранено: ${data.model}` })
       } else {
         setTestResult({ ok: false, message: data.error || 'Ошибка' })
       }
@@ -71,16 +80,29 @@ export default function Settings({ onClose }) {
     setSaving(false)
   }
 
+  const handleSelectModel = (modelId) => {
+    setSelectedModel(modelId)
+    applySettings({ model: modelId })
+  }
+
+  const handleSelectProvider = (key) => {
+    setSelectedProvider(key)
+    setFilterType('llm')
+    const llms = (providers[key]?.models || []).filter((m) => m.type === 'llm')
+    const firstModel = llms.length > 0 ? llms[0].id : ''
+    setSelectedModel(firstModel)
+    applySettings({ provider: key, model: firstModel })
+  }
+
+  const handleSelectEnv = (env) => {
+    setOpenrouterEnv(env)
+    applySettings({ openrouter_env: env })
+  }
+
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
     try {
-      // Temporarily apply settings
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: selectedProvider, model: selectedModel, openrouter_env: openrouterEnv }),
-      })
       const start = Date.now()
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -94,7 +116,6 @@ export default function Settings({ onClose }) {
           ok: true,
           message: `OK (${(elapsed / 1000).toFixed(1)}s) — ${data.response.slice(0, 120)}...`,
         })
-        setCurrent({ provider: selectedProvider, model: selectedModel })
       } else {
         setTestResult({ ok: false, message: data.error || `HTTP ${res.status}` })
       }
@@ -103,8 +124,6 @@ export default function Settings({ onClose }) {
     }
     setTesting(false)
   }
-
-  const isChanged = selectedProvider !== current.provider || selectedModel !== current.model || openrouterEnv !== (current.openrouter_env || 'prod')
 
   return (
     <div className="settings-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -115,7 +134,7 @@ export default function Settings({ onClose }) {
         </div>
 
         <div className="settings-current">
-          <span className="settings-current-label">Текущая:</span>
+          <span className="settings-current-label">Активная:</span>
           <span className="settings-current-value">
             {current.provider_name}
             {current.openrouter_env && (
@@ -135,13 +154,7 @@ export default function Settings({ onClose }) {
               <button
                 key={key}
                 className={`settings-provider-tab ${selectedProvider === key ? 'active' : ''}`}
-                onClick={() => {
-                  setSelectedProvider(key)
-                  setFilterType('llm')
-                  // Auto-select first LLM model
-                  const llms = (val.models || []).filter((m) => m.type === 'llm')
-                  if (llms.length > 0) setSelectedModel(llms[0].id)
-                }}
+                onClick={() => handleSelectProvider(key)}
               >
                 {val.name}
               </button>
@@ -156,14 +169,14 @@ export default function Settings({ onClose }) {
             <div className="settings-env-tabs">
               <button
                 className={`settings-env-tab ${openrouterEnv === 'prod' ? 'active' : ''}`}
-                onClick={() => setOpenrouterEnv('prod')}
+                onClick={() => handleSelectEnv('prod')}
               >
                 <span className="settings-env-dot settings-env-dot-prod" />
                 Prod
               </button>
               <button
                 className={`settings-env-tab ${openrouterEnv === 'test' ? 'active' : ''}`}
-                onClick={() => setOpenrouterEnv('test')}
+                onClick={() => handleSelectEnv('test')}
               >
                 <span className="settings-env-dot settings-env-dot-test" />
                 Test
@@ -200,7 +213,7 @@ export default function Settings({ onClose }) {
               <button
                 key={m.id}
                 className={`settings-model-item ${selectedModel === m.id ? 'active' : ''}`}
-                onClick={() => setSelectedModel(m.id)}
+                onClick={() => handleSelectModel(m.id)}
               >
                 <div className="settings-model-name">{m.name}</div>
                 <div className="settings-model-id">{m.id}</div>
@@ -209,7 +222,7 @@ export default function Settings({ onClose }) {
           </div>
         </div>
 
-        {/* Test result */}
+        {/* Test result / save status */}
         {testResult && (
           <div className={`settings-result ${testResult.ok ? 'settings-result-ok' : 'settings-result-err'}`}>
             {testResult.message}
@@ -223,14 +236,7 @@ export default function Settings({ onClose }) {
             onClick={handleTest}
             disabled={testing || saving}
           >
-            {testing ? 'Тестирую...' : 'Тест'}
-          </button>
-          <button
-            className="btn btn-primary settings-btn-save"
-            onClick={handleSave}
-            disabled={!isChanged || saving || testing}
-          >
-            {saving ? 'Сохраняю...' : 'Применить'}
+            {testing ? 'Тестирую...' : 'Тест модели'}
           </button>
         </div>
       </div>
