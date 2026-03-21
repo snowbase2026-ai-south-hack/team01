@@ -666,7 +666,7 @@ async def classify_message_llm(text: str) -> ClassificationResult:
         client = get_client()
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model="anthropic/claude-3.5-haiku",
+            model=runtime_settings.model,
             max_tokens=200,
             temperature=0,
             messages=[
