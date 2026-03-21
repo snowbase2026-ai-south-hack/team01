@@ -23,6 +23,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
+      - "80:8000"
       - "8000:8000"
     environment:
       - OPENROUTER_API_KEY_PROD=${OPENROUTER_API_KEY_PROD}
