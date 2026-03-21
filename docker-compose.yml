@@ -22,6 +22,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    ports:
+      - "8000:8000"
     environment:
       - OPENROUTER_API_KEY_PROD=${OPENROUTER_API_KEY_PROD}
       - OPENROUTER_API_KEY_TEST=${OPENROUTER_API_KEY_TEST}
