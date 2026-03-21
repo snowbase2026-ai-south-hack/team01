@@ -125,5 +125,25 @@ export function extractAndRenderCharts(content) {
   const mainText = content.slice(0, blockMatch.index).trimEnd()
   const blockText = blockMatch[0]
 
+  // Only show full chart block for substantive responses (>200 chars)
+  // Short responses just get a compact position line
+  if (mainText.length < 200) {
+    const posMatch = blockText.match(/\*\*ТЕКУЩАЯ ПОЗИЦИЯ:\*\*\s*(.+?)(?:\n|$)/)
+    if (posMatch) {
+      const position = posMatch[1].trim()
+      const isRed = /пересмотр|остановка|halt/i.test(position)
+      const isYellow = /скорректированный|adjusted/i.test(position)
+      const color = isRed ? '#ef4444' : isYellow ? '#eab308' : '#22c55e'
+      return {
+        mainText,
+        statusBlock: (
+          <div style={{ marginTop: 8, fontSize: 12, color: color, opacity: 0.8 }}>
+            ■ {position}
+          </div>
+        ),
+      }
+    }
+  }
+
   return { mainText, statusBlock: <StatusBlock text={blockText} /> }
 }

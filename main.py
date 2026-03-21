@@ -1599,13 +1599,12 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
             content={"error": "Сообщение содержит только недопустимые символы."}
         )
 
-    # Session management — use explicit session_id, fallback to client IP
+    # Session management — use explicit session_id, or generate unique per request
     session_id = body.get("session_id")
     if not session_id or not isinstance(session_id, str) or session_id == "default":
-        if request and request.client:
-            session_id = f"ip-{request.client.host}"
-        else:
-            session_id = "default"
+        # No session_id → each request gets its own isolated session
+        import uuid
+        session_id = f"auto-{uuid.uuid4().hex[:12]}"
 
     # Rate limiting
     if not rate_limiter.is_allowed(session_id):
