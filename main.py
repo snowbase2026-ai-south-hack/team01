@@ -1400,7 +1400,7 @@ async def call_claude(messages: list[dict], stream: bool = False, dynamic_state:
     if stream:
         return client.chat.completions.create(
             model=runtime_settings.model,
-            max_tokens=4096,
+            max_tokens=2048,
             messages=full_messages,
             temperature=0.3,
             stream=True,
@@ -1409,7 +1409,7 @@ async def call_claude(messages: list[dict], stream: bool = False, dynamic_state:
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=runtime_settings.model,
-            max_tokens=4096,
+            max_tokens=2048,
             messages=full_messages,
             temperature=0.3,
         )
@@ -1431,9 +1431,10 @@ _init_db()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ── Error handlers ──
@@ -1668,7 +1669,7 @@ async def process_chat(body: dict, request: Request = None) -> JSONResponse:
                 stream_response = await asyncio.to_thread(
                     lambda: get_client().chat.completions.create(
                         model=runtime_settings.model,
-                        max_tokens=4096,
+                        max_tokens=2048,
                         messages=[{"role": "system", "content": system_content}] + messages,
                         temperature=0.3,
                         stream=True,
