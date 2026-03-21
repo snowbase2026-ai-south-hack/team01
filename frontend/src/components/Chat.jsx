@@ -3,11 +3,45 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { extractAndRenderCharts } from './InlineCharts'
 
-function MessageContent({ content, role }) {
+function extractMetricsKey(content) {
+  if (!content) return null
+  const m = content.match(/\*\*КЛЮЧЕВЫЕ МЕТРИКИ:\*\*\s*(.+?)(?:\n|$)/)
+  return m ? m[1].trim() : null
+}
+
+function MessageContent({ content, role, prevAssistantContent, isFirst }) {
   const { mainText, statusBlock } = useMemo(() => {
     if (role !== 'assistant') return { mainText: content, statusBlock: null }
-    return extractAndRenderCharts(content || '')
-  }, [content, role])
+
+    const result = extractAndRenderCharts(content || '')
+
+    // Show full charts only if: first message OR metrics changed
+    if (result.statusBlock) {
+      const curMetrics = extractMetricsKey(content)
+      const prevMetrics = extractMetricsKey(prevAssistantContent)
+
+      if (!isFirst && curMetrics && prevMetrics && curMetrics === prevMetrics) {
+        // Metrics unchanged — compact position line only
+        const posMatch = (content || '').match(/\*\*ТЕКУЩАЯ ПОЗИЦИЯ:\*\*\s*(.+?)(?:\n|$)/)
+        if (posMatch) {
+          const position = posMatch[1].trim()
+          const isRed = /пересмотр|остановка|halt/i.test(position)
+          const isYellow = /скорректированный|adjusted/i.test(position)
+          const color = isRed ? '#ef4444' : isYellow ? '#eab308' : '#22c55e'
+          return {
+            mainText: result.mainText,
+            statusBlock: (
+              <div style={{ marginTop: 8, fontSize: 12, color, opacity: 0.8 }}>
+                ■ {position}
+              </div>
+            ),
+          }
+        }
+      }
+    }
+
+    return result
+  }, [content, role, prevAssistantContent, isFirst])
 
   return (
     <>
@@ -62,16 +96,35 @@ export default function Chat({ messages, onSend, isLoading }) {
             </div>
           </div>
         )}
-        {messages.map((msg, i) => (
-          <div key={i} className={`message message-${msg.role}`}>
-            <div className="message-avatar">
-              {msg.role === 'user' ? 'Вы' : 'AI'}
+        {messages.map((msg, i) => {
+          // Find previous assistant message content for diff comparison
+          let prevAssistantContent = null
+          let isFirstAssistant = true
+          if (msg.role === 'assistant') {
+            for (let j = i - 1; j >= 0; j--) {
+              if (messages[j].role === 'assistant') {
+                prevAssistantContent = messages[j].content
+                isFirstAssistant = false
+                break
+              }
+            }
+          }
+          return (
+            <div key={i} className={`message message-${msg.role}`}>
+              <div className="message-avatar">
+                {msg.role === 'user' ? 'Вы' : 'AI'}
+              </div>
+              <div className="message-bubble">
+                <MessageContent
+                  content={msg.content}
+                  role={msg.role}
+                  prevAssistantContent={prevAssistantContent}
+                  isFirst={isFirstAssistant}
+                />
+              </div>
             </div>
-            <div className="message-bubble">
-              <MessageContent content={msg.content} role={msg.role} />
-            </div>
-          </div>
-        ))}
+          )
+        })}
         {isLoading && (
           <div className="message message-assistant">
             <div className="message-avatar">AI</div>
