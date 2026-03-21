@@ -360,8 +360,7 @@ class ConversationStore:
         self._cache: dict[str, list[dict]] = {}
 
     def get_history(self, session_id: str) -> list[dict]:
-        if session_id in self._cache:
-            return self._cache[session_id]
+        # Always read from PostgreSQL to get latest messages across workers
         if DATABASE_URL:
             try:
                 conn = _get_db()
@@ -512,8 +511,7 @@ class StateStore:
         return s
 
     def get(self, session_id: str) -> DecisionState:
-        if session_id in self._cache:
-            return self._cache[session_id]
+        # Always read from PostgreSQL to get latest state across workers
         if DATABASE_URL:
             try:
                 conn = _get_db()
@@ -528,6 +526,9 @@ class StateStore:
                     return state
             except Exception:
                 pass
+        # Fallback to cache (no DB or DB error)
+        if session_id in self._cache:
+            return self._cache[session_id]
         state = DecisionState()
         self._cache[session_id] = state
         return state
