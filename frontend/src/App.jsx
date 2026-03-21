@@ -33,8 +33,8 @@ export default function App() {
   const [showSessions, setShowSessions] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [metrics, setMetrics] = useState({
-    confidence: 0,
-    pressure: 0,
+    confidence: 0.9,
+    pressure: 0.1,
     turn: 0,
     history: { confidence: [], pressure: [] },
   })
@@ -132,6 +132,40 @@ export default function App() {
         setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
         setIsLoading(false)
 
+        const processLine = (line) => {
+          if (!line.startsWith('data: ')) return
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') return
+
+          try {
+            const parsed = JSON.parse(data)
+
+            if (parsed.metrics) {
+              updateMetrics(parsed.metrics)
+            }
+
+            const token =
+              parsed.choices?.[0]?.delta?.content ||
+              parsed.token ||
+              parsed.content ||
+              ''
+
+            if (token) {
+              assistantText += token
+              setMessages((prev) => {
+                const updated = [...prev]
+                updated[updated.length - 1] = {
+                  role: 'assistant',
+                  content: assistantText,
+                }
+                return updated
+              })
+            }
+          } catch {
+            // skip unparseable lines
+          }
+        }
+
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
@@ -141,38 +175,13 @@ export default function App() {
           buffer = lines.pop() || ''
 
           for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const data = line.slice(6).trim()
-            if (data === '[DONE]') continue
-
-            try {
-              const parsed = JSON.parse(data)
-
-              if (parsed.metrics) {
-                updateMetrics(parsed.metrics)
-              }
-
-              const token =
-                parsed.choices?.[0]?.delta?.content ||
-                parsed.token ||
-                parsed.content ||
-                ''
-
-              if (token) {
-                assistantText += token
-                setMessages((prev) => {
-                  const updated = [...prev]
-                  updated[updated.length - 1] = {
-                    role: 'assistant',
-                    content: assistantText,
-                  }
-                  return updated
-                })
-              }
-            } catch {
-              // skip unparseable lines
-            }
+            processLine(line)
           }
+        }
+
+        // Process any remaining data in buffer (final chunk)
+        if (buffer.trim()) {
+          processLine(buffer)
         }
       } else {
         const data = await res.json()
