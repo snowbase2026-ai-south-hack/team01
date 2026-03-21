@@ -1440,7 +1440,12 @@ class RuntimeSettings:
         return result
 
 
-runtime_settings = RuntimeSettings()
+runtime_settings = RuntimeSettings()  # loads from DB if table exists
+
+
+def _reload_settings():
+    """Reload settings from DB after _init_db() creates the table."""
+    runtime_settings._load_from_db()
 
 
 def get_client():
@@ -1526,8 +1531,9 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Initialize database on startup
+# Initialize database on startup, then reload settings from DB
 _init_db()
+_reload_settings()
 
 app.add_middleware(
     CORSMiddleware,
